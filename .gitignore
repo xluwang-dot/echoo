@@ -1,0 +1,8 @@
+# 排除目录
+tasker/
+res/
+scripts/
+
+# Python
+__pycache__/
+*.pyc
