@@ -68,6 +68,44 @@ const segments = computed(() =>
   sentence.value ? buildSegments(sentence.value.en, sentence.value.tokens) : []
 );
 
+// 复习模式：需默写的词下标列表（in_vocab=true）
+const vocabIndices = computed(() => {
+  if (practiceMode.value !== "review" || !sentence.value) return null;
+  return sentence.value.tokens
+    .map((t, i) => (t.in_vocab ? i : -1))
+    .filter((i) => i >= 0);
+});
+
+// 复习模式：跳到下一个需默写的词
+function advanceToNextVocabWord() {
+  if (!vocabIndices.value) return false; // 非复习模式
+  const pos = vocabIndices.value.indexOf(wordIdx.value);
+  if (pos >= 0 && pos < vocabIndices.value.length - 1) {
+    wordIdx.value = vocabIndices.value[pos + 1];
+    typed.value = "";
+    return true; // 还有生词
+  }
+  return false; // 没有更多生词
+}
+
+// 复习模式：跳过非生词，将 wordIdx 调整到第一个生词
+function skipNonVocabWords() {
+  if (practiceMode.value !== "review" || !sentence.value) return;
+  const firstVocab = sentence.value.tokens.findIndex(
+    (t) => t.in_vocab && t.is_name !== 1
+  );
+  if (firstVocab >= 0) {
+    wordIdx.value = firstVocab;
+    typed.value = "";
+  }
+}
+
+// 复习模式：当前词是否为非生词（需跳过）
+function isSkippable(seg: Seg): boolean {
+  if (practiceMode.value !== "review" || !sentence.value) return false;
+  return sentence.value.tokens[seg.ti!].in_vocab === false;
+}
+
 function renderWord(seg: Seg): string {
   if (seg.type === "text") return seg.text;
   const t = sentence.value!.tokens[seg.ti!];
@@ -78,7 +116,10 @@ function renderWord(seg: Seg): string {
 
 // 是否为当前输入词（word 段且光标在该词）
 function isActive(seg: Seg): boolean {
-  return seg.type === "word" && seg.ti === wordIdx.value && !isName(seg);
+  if (seg.type !== "word" || seg.ti !== wordIdx.value || isName(seg)) return false;
+  // 复习模式：非生词不激活
+  if (isSkippable(seg)) return false;
+  return true;
 }
 
 // 当前词未输入部分（透明占位，保持等宽）
@@ -95,6 +136,8 @@ function renderSegClass(seg: Seg): string {
   if (seg.type === "text") return "punct";
   const t = sentence.value!.tokens[seg.ti!];
   if (t.is_name === 1) return "name";
+  // 复习模式：非生词直接显示完成态
+  if (isSkippable(seg)) return "word-done";
   const hinted = hintSet.value.has(seg.ti!);
   if (seg.ti! < wordIdx.value) return hinted ? "hint-done" : "word-done";
   if (seg.ti === wordIdx.value) return hinted ? "hint-active" : "active";
@@ -117,6 +160,11 @@ async function onChar(ch: string) {
         // 整词完成
         if (r.sentenceDone) {
           await finishSentence();
+        } else if (vocabIndices.value) {
+          // 复习模式：跳到下一个生词，或完成句子
+          if (!advanceToNextVocabWord()) {
+            await finishSentence();
+          }
         } else {
           wordIdx.value += 1;
           typed.value = "";
@@ -197,6 +245,7 @@ async function finishSentence() {
     wordIdx.value = r.next!.wordIdx;
     typed.value = "";
     hintSet.value = new Set();
+    skipNonVocabWords(); // 复习模式：跳到第一个生词
     await nextTick();
     slideState.value = "enter";
     await new Promise((r) => setTimeout(r, 420));
@@ -218,6 +267,7 @@ async function onStart(mode: "practice" | "review" = "practice") {
     wordIdx.value = r.current.wordIdx;
     typed.value = "";
     hintSet.value = new Set();
+    skipNonVocabWords(); // 复习模式：跳到第一个生词
     todayList.value = [];
     finishDone.value = false;
     phase.value = "running";

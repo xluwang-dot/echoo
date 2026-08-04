@@ -4,6 +4,7 @@ export interface Token {
   word: string;
   is_name: number;
   is_bold: number;
+  in_vocab: boolean;
 }
 
 export interface Sentence {

@@ -12,10 +12,10 @@ import { addVocab } from "../vocab.js";
 
 const MAX_TARGET = 50;
 
-// 取当前句子 tokens（word + is_name）
-function currentTokens(db: DatabaseSync, state: import("../practiceSession.js").SessionState) {
+// 取当前句子 tokens（word + is_name + in_vocab）
+function currentTokens(db: DatabaseSync, state: import("../practiceSession.js").SessionState, userId: number) {
   const sentenceId = state.sentenceIds[state.idx];
-  const s = getSentenceWithTokens(db, sentenceId);
+  const s = getSentenceWithTokens(db, sentenceId, userId);
   return { sentenceId, sentence: s!, wordIdx: state.wordIdx, typed: state.typed };
 }
 
@@ -51,7 +51,7 @@ export function practiceRouter(db?: DatabaseSync): Router {
       reviewOnly: mode === "review",
     });
     skipNameWords(state, []); // start 后 skipNameWords 需要 tokens，后面 currentTokens 里处理
-    const cur = currentTokens(database, state);
+    const cur = currentTokens(database, state, req.session.userId!);
     skipNameWords(state, cur.sentence.tokens);
     res.json({
       total: state.targetCount,
@@ -77,7 +77,7 @@ export function practiceRouter(db?: DatabaseSync): Router {
       res.status(400).json({ error: "char 需为单个字符" });
       return;
     }
-    const { sentence } = currentTokens(database, state);
+    const { sentence } = currentTokens(database, state, req.session.userId!);
     skipNameWords(state, sentence.tokens);
     const word = sentence.tokens[state.wordIdx]?.word;
     if (word === undefined) {
@@ -112,7 +112,7 @@ export function practiceRouter(db?: DatabaseSync): Router {
       res.status(409).json({ error: "没有进行中的练习" });
       return;
     }
-    const { sentence } = currentTokens(database, state);
+    const { sentence } = currentTokens(database, state, req.session.userId!);
     skipNameWords(state, sentence.tokens);
     const word = sentence.tokens[state.wordIdx]?.word;
     if (word === undefined) {
@@ -135,7 +135,7 @@ export function practiceRouter(db?: DatabaseSync): Router {
       res.status(409).json({ error: "没有进行中的练习" });
       return;
     }
-    const { sentence } = currentTokens(database, state);
+    const { sentence } = currentTokens(database, state, req.session.userId!);
     skipNameWords(state, sentence.tokens);
     state.typed = state.typed.slice(0, -1);
     res.json({ typed: state.typed });
@@ -161,7 +161,7 @@ export function practiceRouter(db?: DatabaseSync): Router {
       clearSession(req.session.userId!);
       res.json({ done: true });
     } else {
-      const cur = getSentenceWithTokens(database, state.sentenceIds[state.idx])!;
+      const cur = getSentenceWithTokens(database, state.sentenceIds[state.idx], req.session.userId!)!;
       skipNameWords(state, cur.tokens);
       res.json({
         done: false,

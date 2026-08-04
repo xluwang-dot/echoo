@@ -8,7 +8,7 @@ export interface SentenceWithTokens {
   id: number;
   en: string;
   zh: string;
-  tokens: { word_id: number; word: string; is_name: number; is_bold: number }[];
+  tokens: { word_id: number; word: string; is_name: number; is_bold: number; in_vocab: boolean }[];
 }
 
 // ---------- 抽取（需求 §3.3）----------
@@ -191,7 +191,8 @@ export function completeSentence(
 }
 
 // 取句子 + tokens（供前端渲染与判定）
-export function getSentenceWithTokens(db: DatabaseSync, sentenceId: number): SentenceWithTokens | undefined {
+// userId 可选：传入时计算每个词的 in_vocab 状态（复习模式用）
+export function getSentenceWithTokens(db: DatabaseSync, sentenceId: number, userId?: number): SentenceWithTokens | undefined {
   const s = db.prepare("SELECT id, en, zh FROM sentences WHERE id = ?").get(sentenceId) as
     | { id: number; en: string; zh: string }
     | undefined;
@@ -203,10 +204,27 @@ export function getSentenceWithTokens(db: DatabaseSync, sentenceId: number): Sen
        WHERE sw.sentence_id = ? ORDER BY sw.position`
     )
     .all(sentenceId) as { position: number; word_id: number; word: string; is_name: number; is_bold: number }[];
+
+  // 查询该句在用户生词本中的 word_id 集合
+  const vocabWordIds = userId
+    ? new Set(
+        db
+          .prepare("SELECT word_id FROM user_vocab WHERE user_id = ? AND sentence_id = ?")
+          .all(userId, sentenceId)
+          .map((r: any) => r.word_id)
+      )
+    : new Set<number>();
+
   return {
     id: s.id,
     en: s.en,
     zh: s.zh,
-    tokens: rows.map((r) => ({ word_id: r.word_id, word: r.word, is_name: r.is_name, is_bold: r.is_bold })),
+    tokens: rows.map((r) => ({
+      word_id: r.word_id,
+      word: r.word,
+      is_name: r.is_name,
+      is_bold: r.is_bold,
+      in_vocab: vocabWordIds.has(r.word_id),
+    })),
   };
 }
