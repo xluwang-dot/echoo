@@ -67,16 +67,23 @@ function renderWord(seg: Seg): string {
   if (seg.type === "text") return seg.text;
   const t = sentence.value!.tokens[seg.ti!];
   if (t.is_name === 1) return t.word;
-  const hinted = hintSet.value.has(seg.ti!);
   if (seg.ti! < wordIdx.value) return t.word; // 已完成（颜色由 class 决定）
-  if (seg.ti === wordIdx.value) {
-    if (hinted) {
-      // 提示词：已敲部分 + 未敲原文（浅色由 class 控制）
-      return typed.value + t.word.slice(typed.value.length);
-    }
-    return typed.value + "_".repeat(Math.max(0, t.word.length - typed.value.length));
-  }
-  return "_".repeat(t.word.length); // 未到
+  return t.word; // 当前/未到：由模板或透明渲染
+}
+
+// 是否为当前输入词（word 段且光标在该词）
+function isActive(seg: Seg): boolean {
+  return seg.type === "word" && seg.ti === wordIdx.value && !isName(seg);
+}
+
+// 当前词未输入部分（透明占位，保持等宽）
+function blankRemain(seg: Seg): string {
+  const t = sentence.value!.tokens[seg.ti!];
+  return t.word.slice(typed.value.length);
+}
+
+function isName(seg: Seg): boolean {
+  return seg.type === "word" && sentence.value!.tokens[seg.ti!].is_name === 1;
 }
 
 function renderSegClass(seg: Seg): string {
@@ -84,27 +91,9 @@ function renderSegClass(seg: Seg): string {
   const t = sentence.value!.tokens[seg.ti!];
   if (t.is_name === 1) return "name";
   const hinted = hintSet.value.has(seg.ti!);
-  if (seg.ti! < wordIdx.value) return hinted ? "hint-done" : "done";
+  if (seg.ti! < wordIdx.value) return hinted ? "hint-done" : "word-done";
   if (seg.ti === wordIdx.value) return hinted ? "hint-active" : "active";
   return "todo";
-}
-
-// 是否为「当前正在照敲的提示词」
-function isHintActive(seg: Seg): boolean {
-  return seg.type === "word" && seg.ti === wordIdx.value && hintSet.value.has(seg.ti!);
-}
-
-// 提示词未敲部分（浅色显示）
-function hintRemain(seg: Seg): string {
-  const t = sentence.value!.tokens[seg.ti!];
-  return t.word.slice(typed.value.length);
-}
-
-// 词固定宽度（ch 单位，等宽字体下宽度锁定，输入时位置不移动）
-function wordWidth(seg: Seg): { minWidth: string } | undefined {
-  if (seg.type !== "word" || seg.ti === undefined) return undefined;
-  const len = sentence.value!.tokens[seg.ti].word.length;
-  return { minWidth: len + "ch" };
 }
 
 // ---------- 输入 ----------
@@ -301,19 +290,12 @@ onUnmounted(() => {
         </div>
         <div class="zh">{{ sentence?.zh }}</div>
         <div class="en" :class="{ flash: flashError }">
-          <template v-for="(seg, i) in segments" :key="i">
-            <span
-              v-if="isHintActive(seg)"
-              class="hint-active"
-              :style="wordWidth(seg)"
-            >
-              <span class="hint-typed">{{ typed }}</span>
-              <span class="hint-remain">{{ hintRemain(seg) }}</span>
-            </span>
-            <span v-else :class="renderSegClass(seg)" :style="wordWidth(seg)">
-              {{ renderWord(seg) }}
-            </span>
-          </template>
+          <span v-for="(seg, i) in segments" :key="i" :class="renderSegClass(seg)">
+            <template v-if="seg.type === 'word' && isActive(seg)">
+              <span class="typed">{{ typed }}</span><span class="blank">{{ blankRemain(seg) }}</span>
+            </template>
+            <template v-else>{{ renderWord(seg) }}</template>
+          </span>
         </div>
         <div class="actions">
           <button :disabled="busy" @click="playSentence">朗读</button>
@@ -409,21 +391,20 @@ onUnmounted(() => {
   text-align: center;
 }
 .en {
-  font-size: 40px;
+  font-size: 28px;
   font-weight: 700;
   line-height: 2;
   font-family: "Courier New", monospace;
-  letter-spacing: 3px;
-  min-height: 100px;
+  min-height: 80px;
   text-align: center;
+  white-space: pre;
 }
 .en > span {
   display: inline-block;
   text-align: center;
-  letter-spacing: 1px;
 }
 .en > span + span {
-  margin-left: 14px;
+  margin-left: 10px;
 }
 .en .punct {
   color: #9aa1af;
@@ -432,7 +413,7 @@ onUnmounted(() => {
   color: #1f2430;
   font-weight: 700;
 }
-.en .done {
+.en .word-done {
   color: #1d9e54;
 }
 .en .hint-done {
@@ -443,10 +424,10 @@ onUnmounted(() => {
   color: #bbb;
   background: #f0f0f4;
 }
-.en .hint-typed {
+.en .hint-active .typed {
   color: #d66;
 }
-.en .hint-remain {
+.en .hint-active .blank {
   color: #bbb;
 }
 .en .active {
@@ -454,8 +435,14 @@ onUnmounted(() => {
   border-bottom: 4px solid #3b6ef6;
   animation: blink 1s step-end infinite;
 }
+.en .active .typed {
+  color: #1f2430;
+}
+.en .active .blank {
+  color: transparent;
+}
 .en .todo {
-  color: #b8c0cf;
+  color: transparent;
 }
 .en.flash .active {
   border-bottom-color: #e33;
