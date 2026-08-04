@@ -29,49 +29,33 @@ let timerId: number | null = null;
 const todayList = ref<{ en: string; ms: number }[]>([]);
 const finishDone = ref(false);
 
-// 片段：词（对应 token 下标）或原样文本（标点/空格/数字）
+// 片段：词（对应 token 下标）或原样文本（标点/空格/数字/连字符）
 interface Seg {
   type: "word" | "text";
   text: string;
   ti?: number; // word 时对应 token 下标
 }
+// 按 token 顺序在原文中定位（大小写不敏感、词边界）。tokens 来自词表分词，
+// 粒度与原文不一致（如 warm-up 拆成 warm/up、25th 拆成 th），用 \b 顺序匹配可对齐。
 function buildSegments(en: string, tokens: Token[]): Seg[] {
   const segs: Seg[] = [];
-  let wi = 0;
-  let acc = "";
-  let text = "";
-  const flushText = () => {
-    if (text) {
-      segs.push({ type: "text", text });
-      text = "";
+  let cursor = 0;
+  for (let ti = 0; ti < tokens.length; ti++) {
+    const word = tokens[ti].word;
+    const esc = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // 边界用「前后非字母」而非 \b：\b 在撇号/连字符（非词字符）后接非词字符时无边界，
+    // 会导致 students' 这类带撇号 token 匹配失败。非字母边界可覆盖撇号、数字后缀。
+    const m = new RegExp(`(?<![A-Za-z])${esc}(?![A-Za-z])`, "i").exec(en.slice(cursor));
+    if (!m) {
+      // 原文中定位不到（异常数据），兜底输出原文
+      continue;
     }
-  };
-  for (const ch of en) {
-    if (/[A-Za-z0-9'-]/.test(ch)) {
-      flushText();
-      acc += ch;
-    } else {
-      if (acc) {
-        // 尝试与下一个 token 匹配（大小写不敏感）
-        if (wi < tokens.length && acc.toLowerCase() === tokens[wi].word.toLowerCase()) {
-          segs.push({ type: "word", text: acc, ti: wi });
-          wi++;
-        } else {
-          segs.push({ type: "text", text: acc });
-        }
-        acc = "";
-      }
-      text += ch;
-    }
+    const matchStart = cursor + m.index;
+    if (matchStart > cursor) segs.push({ type: "text", text: en.slice(cursor, matchStart) });
+    segs.push({ type: "word", text: m[0], ti });
+    cursor = matchStart + m[0].length;
   }
-  if (acc) {
-    if (wi < tokens.length && acc.toLowerCase() === tokens[wi].word.toLowerCase()) {
-      segs.push({ type: "word", text: acc, ti: wi });
-    } else {
-      segs.push({ type: "text", text: acc });
-    }
-  }
-  flushText();
+  if (cursor < en.length) segs.push({ type: "text", text: en.slice(cursor) });
   return segs;
 }
 
@@ -80,6 +64,7 @@ const segments = computed(() =>
 );
 
 function renderWord(seg: Seg): string {
+  if (seg.type === "text") return seg.text;
   const t = sentence.value!.tokens[seg.ti!];
   if (t.is_name === 1) return t.word;
   if (seg.ti! < wordIdx.value) return t.word; // 已完成

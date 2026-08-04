@@ -32,7 +32,6 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   if (res.status === 401) {
-    location.href = "/login";
     throw new Error("未登录");
   }
   if (!res.ok) {

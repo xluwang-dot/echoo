@@ -11,6 +11,7 @@ tts_service/.venv/
 # Node / TS
 node_modules/
 dist/
+*.tsbuildinfo
 
 # 运行时产物
 data/
