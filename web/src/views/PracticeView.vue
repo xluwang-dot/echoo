@@ -210,6 +210,7 @@ async function onStart(mode: "practice" | "review" = "practice") {
   error.value = "";
   busy.value = true;
   practiceMode.value = mode;
+  slideState.value = "idle"; // 重置滑动状态，避免上一轮 slide-exit 残留
   try {
     const r = await api.start(targetCount.value, mode);
     total.value = r.total;
