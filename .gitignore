@@ -6,3 +6,11 @@ scripts/
 # Python
 __pycache__/
 *.pyc
+tts_service/.venv/
+
+# Node / TS
+node_modules/
+dist/
+
+# 运行时产物
+data/

@@ -1,0 +1,35 @@
+// 全局样式（手写 CSS，无 UI 库）
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  background: #f2f4f8;
+  color: #1f2430;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 16px;
+  background: #3b6ef6;
+  color: #fff;
+}
+
+button:disabled {
+  background: #b8c0cf;
+  cursor: not-allowed;
+}
+
+input {
+  font: inherit;
+  border: 1px solid #c7ceda;
+  border-radius: 6px;
+  padding: 8px 10px;
+  width: 100%;
+}
