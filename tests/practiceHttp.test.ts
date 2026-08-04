@@ -122,7 +122,7 @@ describe("T010 practice HTTP API", () => {
     expect(ws.c).toBe(2);
   });
 
-  it("hint 提示词：入生词本 + 返回词，照敲后推进", async () => {
+  it("hint 提示词：入生词本 + 返回词，停留在当前词（需再输入一次）", async () => {
     await agent.post("/api/practice/start").send({ targetCount: 1 });
     const res = await agent.post("/api/practice/hint").send({});
     expect(res.status).toBe(200);
@@ -130,6 +130,49 @@ describe("T010 practice HTTP API", () => {
     // 入生词本验证
     const uv = db.prepare("SELECT COUNT(*) AS c FROM user_vocab").get() as { c: number };
     expect(uv.c).toBe(1);
+    // 仍在当前词：照敲 foo 首字符应 correct
+    const r = await agent.post("/api/practice/check").send({ char: "f" });
+    expect(r.body.correct).toBe(true);
+  });
+
+  it("hint 后照敲该词，再敲后续词完成整句", async () => {
+    await agent.post("/api/practice/start").send({ targetCount: 1 });
+    // hint foo（第 0 词）
+    const h = await agent.post("/api/practice/hint").send({});
+    expect(h.body.word).toBe("foo");
+    // 照敲 foo
+    for (const ch of ["f", "o", "o"]) await agent.post("/api/practice/check").send({ char: ch });
+    // 敲 bar → 末词完成
+    for (const ch of ["b", "a", "r"]) await agent.post("/api/practice/check").send({ char: ch });
+    // complete 时 foo 记为 hint
+    await agent.post("/api/practice/complete").send({
+      wordResults: [
+        { wordId: widFoo, result: "hint" },
+        { wordId: widBar, result: "mastered" },
+      ],
+    });
+    // 含 hint 词 → 词句对不移除，foo 保留在生词本
+    const uv = db.prepare("SELECT COUNT(*) AS c FROM user_vocab").get() as { c: number };
+    expect(uv.c).toBe(1);
+  });
+
+  it("backspace：删除当前词最后一个字符，再输入可继续", async () => {
+    await agent.post("/api/practice/start").send({ targetCount: 1 });
+    // 输入 f, o
+    await agent.post("/api/practice/check").send({ char: "f" });
+    await agent.post("/api/practice/check").send({ char: "o" });
+    // 退格删掉 o
+    const bs = await agent.post("/api/practice/backspace").send({});
+    expect(bs.status).toBe(200);
+    expect(bs.body.typed).toBe("f");
+    // 再输入 o → 应正确
+    const r = await agent.post("/api/practice/check").send({ char: "o" });
+    expect(r.body.correct).toBe(true);
+  });
+
+  it("未开始会话调用 backspace → 409", async () => {
+    const res = await agent.post("/api/practice/backspace").send({});
+    expect(res.status).toBe(409);
   });
 
   it("整句完成且句中词在生词本 → 该句词句对移除", async () => {

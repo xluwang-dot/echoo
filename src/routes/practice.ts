@@ -20,10 +20,17 @@ function currentTokens(db: DatabaseSync, state: import("../practiceSession.js").
 }
 
 // 判断当前词是否为人名词（跳过输入）
-function currentWordIsName(state: { sentence: { tokens: { is_name: number }[] }; wordIdx: number }): boolean {
-  const t = state.sentence.tokens[state.wordIdx];
-  if (!t) return false;
-  return t.is_name === 1;
+function isNameAt(tokens: { is_name: number }[], wordIdx: number): boolean {
+  const t = tokens[wordIdx];
+  return !!t && t.is_name === 1;
+}
+
+// 跳过连续人名词，指向下一个需要输入的词
+function skipNameWords(state: { wordIdx: number; typed: string }, tokens: { is_name: number }[]) {
+  while (isNameAt(tokens, state.wordIdx)) {
+    state.wordIdx += 1;
+    state.typed = "";
+  }
 }
 
 export function practiceRouter(db?: DatabaseSync): Router {
@@ -39,6 +46,7 @@ export function practiceRouter(db?: DatabaseSync): Router {
     }
     const state = createSession(database, req.session.userId!, targetCount);
     const cur = currentTokens(database, state);
+    skipNameWords(state, cur.sentence.tokens);
     res.json({
       total: state.targetCount,
       current: {
@@ -46,6 +54,7 @@ export function practiceRouter(db?: DatabaseSync): Router {
         zh: cur.sentence.zh,
         en: cur.sentence.en,
         tokens: cur.sentence.tokens,
+        wordIdx: state.wordIdx,
       },
     });
   });
@@ -63,6 +72,7 @@ export function practiceRouter(db?: DatabaseSync): Router {
       return;
     }
     const { sentence } = currentTokens(database, state);
+    skipNameWords(state, sentence.tokens);
     const word = sentence.tokens[state.wordIdx]?.word;
     if (word === undefined) {
       res.status(409).json({ error: "当前无单词" });
@@ -89,7 +99,7 @@ export function practiceRouter(db?: DatabaseSync): Router {
     }
   });
 
-  // 提示词：当前词入生词本 + 返回灰色词，照敲后推进
+  // 提示词：当前词入生词本 + 返回词；词浅色提示，仍要求用户再输入一次
   router.post("/hint", requireAuth, (req, res) => {
     const state = getSession(req.session.userId!);
     if (!state) {
@@ -97,6 +107,7 @@ export function practiceRouter(db?: DatabaseSync): Router {
       return;
     }
     const { sentence } = currentTokens(database, state);
+    skipNameWords(state, sentence.tokens);
     const word = sentence.tokens[state.wordIdx]?.word;
     if (word === undefined) {
       res.status(409).json({ error: "当前无单词" });
@@ -107,7 +118,21 @@ export function practiceRouter(db?: DatabaseSync): Router {
     if (wrow) {
       addVocab(database, req.session.userId!, wrow.id, sentence.id);
     }
+    // 不推进当前词：用户仍需照敲一次
     res.json({ word });
+  });
+
+  // 退格：删除当前词已输入的最后字符（保持服务端权威判定）
+  router.post("/backspace", requireAuth, (req, res) => {
+    const state = getSession(req.session.userId!);
+    if (!state) {
+      res.status(409).json({ error: "没有进行中的练习" });
+      return;
+    }
+    const { sentence } = currentTokens(database, state);
+    skipNameWords(state, sentence.tokens);
+    state.typed = state.typed.slice(0, -1);
+    res.json({ typed: state.typed });
   });
 
   // 整句完成：上报各词结果落库，推进下一句或结束
@@ -131,9 +156,16 @@ export function practiceRouter(db?: DatabaseSync): Router {
       res.json({ done: true });
     } else {
       const cur = getSentenceWithTokens(database, state.sentenceIds[state.idx])!;
+      skipNameWords(state, cur.tokens);
       res.json({
         done: false,
-        next: { sentenceId: cur.id, zh: cur.zh, en: cur.en, tokens: cur.tokens },
+        next: {
+          sentenceId: cur.id,
+          zh: cur.zh,
+          en: cur.en,
+          tokens: cur.tokens,
+          wordIdx: state.wordIdx,
+        },
       });
     }
   });

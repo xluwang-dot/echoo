@@ -67,9 +67,13 @@ function renderWord(seg: Seg): string {
   if (seg.type === "text") return seg.text;
   const t = sentence.value!.tokens[seg.ti!];
   if (t.is_name === 1) return t.word;
-  if (seg.ti! < wordIdx.value) return t.word; // 已完成
+  const hinted = hintSet.value.has(seg.ti!);
+  if (seg.ti! < wordIdx.value) return t.word; // 已完成（颜色由 class 决定）
   if (seg.ti === wordIdx.value) {
-    if (hintSet.value.has(seg.ti)) return t.word; // 提示词显示原文
+    if (hinted) {
+      // 提示词：已敲部分 + 未敲原文（浅色由 class 控制）
+      return typed.value + t.word.slice(typed.value.length);
+    }
     return typed.value + "_".repeat(Math.max(0, t.word.length - typed.value.length));
   }
   return "_".repeat(t.word.length); // 未到
@@ -79,12 +83,28 @@ function renderSegClass(seg: Seg): string {
   if (seg.type === "text") return "punct";
   const t = sentence.value!.tokens[seg.ti!];
   if (t.is_name === 1) return "name";
-  if (seg.ti! < wordIdx.value) return "done";
-  if (seg.ti === wordIdx.value) {
-    if (hintSet.value.has(seg.ti)) return "hint";
-    return "active";
-  }
+  const hinted = hintSet.value.has(seg.ti!);
+  if (seg.ti! < wordIdx.value) return hinted ? "hint-done" : "done";
+  if (seg.ti === wordIdx.value) return hinted ? "hint-active" : "active";
   return "todo";
+}
+
+// 是否为「当前正在照敲的提示词」
+function isHintActive(seg: Seg): boolean {
+  return seg.type === "word" && seg.ti === wordIdx.value && hintSet.value.has(seg.ti!);
+}
+
+// 提示词未敲部分（浅色显示）
+function hintRemain(seg: Seg): string {
+  const t = sentence.value!.tokens[seg.ti!];
+  return t.word.slice(typed.value.length);
+}
+
+// 词固定宽度（ch 单位，等宽字体下宽度锁定，输入时位置不移动）
+function wordWidth(seg: Seg): { minWidth: string } | undefined {
+  if (seg.type !== "word" || seg.ti === undefined) return undefined;
+  const len = sentence.value!.tokens[seg.ti].word.length;
+  return { minWidth: len + "ch" };
 }
 
 // ---------- 输入 ----------
@@ -120,7 +140,17 @@ async function onChar(ch: string) {
 }
 
 async function onBackspace() {
-  typed.value = typed.value.slice(0, -1);
+  if (phase.value !== "running" || busy.value) return;
+  if (typed.value === "") return;
+  busy.value = true;
+  try {
+    const r = await api.backspace();
+    typed.value = r.typed;
+  } catch (e) {
+    error.value = (e as Error).message;
+  } finally {
+    busy.value = false;
+  }
 }
 
 async function onHint() {
@@ -131,7 +161,8 @@ async function onHint() {
   busy.value = true;
   try {
     await api.hint();
-    hintSet.value.add(wordIdx.value);
+    hintSet.value.add(wordIdx.value); // 浅色显示，用户照敲
+    typed.value = "";
   } catch (e) {
     error.value = (e as Error).message;
   } finally {
@@ -157,9 +188,10 @@ async function finishSentence() {
     phase.value = "done";
   } else {
     sentence.value = r.next!;
-    wordIdx.value = 0;
+    wordIdx.value = r.next!.wordIdx;
     typed.value = "";
     hintSet.value = new Set();
+    playSentence();
   }
 }
 
@@ -171,7 +203,7 @@ async function onStart() {
     const r = await api.start(targetCount.value);
     total.value = r.total;
     sentence.value = r.current;
-    wordIdx.value = 0;
+    wordIdx.value = r.current.wordIdx;
     typed.value = "";
     hintSet.value = new Set();
     todayList.value = [];
@@ -181,9 +213,10 @@ async function onStart() {
     elapsed.value = 0;
     if (timerId) clearInterval(timerId);
     timerId = window.setInterval(() => {
-      elapsed.value = Date.now() - startMs.value;
-      elapsedText.value = (elapsed.value / 1000).toFixed(1) + "s";
-    }, 100);
+      elapsed.value = Math.floor((Date.now() - startMs.value) / 1000);
+      elapsedText.value = elapsed.value + "s";
+    }, 1000);
+    playSentence();
   } catch (e) {
     error.value = (e as Error).message;
   } finally {
@@ -244,7 +277,6 @@ onUnmounted(() => {
 
 <template>
   <div class="practice">
-    <!-- 左侧 80%：拼写区 -->
     <div class="main">
       <div class="topbar">
         <span class="title">背单词 · 听写</span>
@@ -269,9 +301,19 @@ onUnmounted(() => {
         </div>
         <div class="zh">{{ sentence?.zh }}</div>
         <div class="en" :class="{ flash: flashError }">
-          <span v-for="(seg, i) in segments" :key="i" :class="renderSegClass(seg)">
-            {{ renderWord(seg) }}
-          </span>
+          <template v-for="(seg, i) in segments" :key="i">
+            <span
+              v-if="isHintActive(seg)"
+              class="hint-active"
+              :style="wordWidth(seg)"
+            >
+              <span class="hint-typed">{{ typed }}</span>
+              <span class="hint-remain">{{ hintRemain(seg) }}</span>
+            </span>
+            <span v-else :class="renderSegClass(seg)" :style="wordWidth(seg)">
+              {{ renderWord(seg) }}
+            </span>
+          </template>
         </div>
         <div class="actions">
           <button :disabled="busy" @click="playSentence">朗读</button>
@@ -286,33 +328,33 @@ onUnmounted(() => {
       <!-- 完成 -->
       <div v-else class="done">
         <h2>练习完成</h2>
-        <p>完成 {{ todayList.length }} 句，用时 {{ elapsedText }}</p>
+        <div class="stats">
+          <div class="stat">
+            <span class="num">{{ todayList.length }}</span>
+            <span class="label">完成句子</span>
+          </div>
+          <div class="stat">
+            <span class="num">{{ elapsedText }}</span>
+            <span class="label">总用时</span>
+          </div>
+        </div>
         <button @click="phase = 'setup'; sentence = null">再来一轮</button>
       </div>
-    </div>
-
-    <!-- 右侧 20%：当日已测 -->
-    <div class="side">
-      <h3>今日已测</h3>
-      <ul class="today">
-        <li v-for="(it, i) in todayList" :key="i">
-          <span class="sen">{{ it.en }}</span>
-          <span class="ms">{{ (it.ms / 1000).toFixed(1) }}s</span>
-        </li>
-      </ul>
-      <p v-if="todayList.length === 0" class="empty">练习中…</p>
     </div>
   </div>
 </template>
 
 <style scoped>
 .practice {
-  display: flex;
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 .main {
-  flex: 4;
-  padding: 20px 28px;
+  width: 100%;
+  max-width: 860px;
+  padding: 24px 28px;
   display: flex;
   flex-direction: column;
 }
@@ -323,8 +365,8 @@ onUnmounted(() => {
   margin-bottom: 24px;
 }
 .title {
-  font-size: 18px;
-  font-weight: 600;
+  font-size: 22px;
+  font-weight: 700;
 }
 .ghost {
   background: transparent;
@@ -333,52 +375,84 @@ onUnmounted(() => {
 }
 .setup {
   margin: auto;
-  width: 300px;
+  width: 340px;
   background: #fff;
-  padding: 24px;
+  padding: 32px;
   border-radius: 10px;
+  text-align: center;
+}
+.setup h2 {
+  font-size: 26px;
+  font-weight: 700;
+  margin-bottom: 20px;
 }
 .setup label {
   display: block;
-  margin-bottom: 12px;
+  margin-bottom: 16px;
+  font-size: 16px;
 }
 .setup button {
   width: 100%;
+  font-size: 16px;
+  padding: 12px;
 }
 .progress {
   color: #6b7382;
-  margin-bottom: 8px;
+  margin-bottom: 12px;
+  font-size: 15px;
+  text-align: center;
 }
 .zh {
-  font-size: 20px;
-  font-weight: 600;
-  margin-bottom: 24px;
+  font-size: 24px;
+  font-weight: 700;
+  margin-bottom: 28px;
+  text-align: center;
 }
 .en {
-  font-size: 30px;
+  font-size: 40px;
+  font-weight: 700;
   line-height: 2;
   font-family: "Courier New", monospace;
-  word-spacing: 10px;
-  letter-spacing: 2px;
-  min-height: 80px;
+  letter-spacing: 3px;
+  min-height: 100px;
+  text-align: center;
+}
+.en > span {
+  display: inline-block;
+  text-align: center;
+  letter-spacing: 1px;
+}
+.en > span + span {
+  margin-left: 14px;
 }
 .en .punct {
   color: #9aa1af;
 }
 .en .name {
   color: #1f2430;
-  font-weight: 600;
+  font-weight: 700;
 }
 .en .done {
   color: #1d9e54;
 }
-.en .hint {
-  color: #888;
-  background: #e8e8ec;
+.en .hint-done {
+  color: #d66;
+  font-weight: 700;
+}
+.en .hint-active {
+  color: #bbb;
+  background: #f0f0f4;
+}
+.en .hint-typed {
+  color: #d66;
+}
+.en .hint-remain {
+  color: #bbb;
 }
 .en .active {
   background: #e6f0ff;
-  border-bottom: 3px solid #3b6ef6;
+  border-bottom: 4px solid #3b6ef6;
+  animation: blink 1s step-end infinite;
 }
 .en .todo {
   color: #b8c0cf;
@@ -386,57 +460,72 @@ onUnmounted(() => {
 .en.flash .active {
   border-bottom-color: #e33;
   color: #e33;
+  animation: none;
+}
+@keyframes blink {
+  50% {
+    border-bottom-color: transparent;
+  }
 }
 .actions {
   display: flex;
-  gap: 10px;
-  margin-top: 12px;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+.actions button {
+  font-size: 15px;
+  padding: 10px 22px;
 }
 .danger {
   background: #d66;
-  margin-left: auto;
 }
 .tip {
-  margin-top: 12px;
+  margin-top: 14px;
   color: #9aa1af;
-  font-size: 13px;
+  font-size: 14px;
+  text-align: center;
 }
 .error {
   color: #d33;
   margin-top: 10px;
+  text-align: center;
 }
-.side {
-  flex: 1;
+.done {
+  margin: auto;
+  text-align: center;
   background: #fff;
-  border-left: 1px solid #e4e8f0;
-  padding: 20px;
-  max-height: 100vh;
-  overflow-y: auto;
+  padding: 36px 48px;
+  border-radius: 12px;
 }
-.side h3 {
-  margin-bottom: 12px;
+.done h2 {
+  font-size: 28px;
+  font-weight: 700;
+  margin-bottom: 24px;
 }
-.today {
-  list-style: none;
-}
-.today li {
+.stats {
   display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 0;
-  border-bottom: 1px dashed #eef1f6;
-  font-size: 13px;
+  justify-content: center;
+  gap: 48px;
+  margin-bottom: 28px;
 }
-.today .sen {
-  flex: 1;
-  color: #333a46;
+.stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
-.today .ms {
-  color: #9aa1af;
-  white-space: nowrap;
+.stat .num {
+  font-size: 42px;
+  font-weight: 700;
+  color: #3b6ef6;
 }
-.empty {
-  color: #b8c0cf;
-  font-size: 13px;
+.stat .label {
+  margin-top: 6px;
+  color: #6b7382;
+  font-size: 14px;
+}
+.done button {
+  font-size: 16px;
+  padding: 12px 32px;
 }
 </style>

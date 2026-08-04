@@ -11,6 +11,7 @@ export interface Sentence {
   zh: string;
   en: string;
   tokens: Token[];
+  wordIdx: number;
 }
 
 export interface StartResult {
@@ -51,7 +52,8 @@ export const api = {
 
   start: (targetCount: number) => req<StartResult>("POST", "/api/practice/start", { targetCount }),
   check: (char: string) => req<CheckResult>("POST", "/api/practice/check", { char }),
-  hint: () => req<{ word: string }>("POST", "/api/practice/hint", {}),
+  hint: () => req<{ word: string; sentenceDone: boolean }>("POST", "/api/practice/hint", {}),
+  backspace: () => req<{ typed: string }>("POST", "/api/practice/backspace", {}),
   complete: (wordResults: { wordId: number; result: string }[]) =>
     req<{ done: boolean; next?: Sentence }>("POST", "/api/practice/complete", { wordResults }),
   finish: () => req<{ ok: boolean; done: number }>("POST", "/api/practice/finish", {}),
