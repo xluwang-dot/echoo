@@ -1,7 +1,7 @@
 // 练习会话状态机（T010，内存存储）
 // 每个登录用户同时只有一个进行中的练习会话。
 import type { DatabaseSync } from "node:sqlite";
-import { drawSession, startSession } from "./practice.js";
+import { drawSession, startSession, type DrawConfig } from "./practice.js";
 
 export interface SessionState {
   sessionId: number;
@@ -28,8 +28,8 @@ export function clearSession(userId: number): void {
 }
 
 // 创建会话：抽取句子 + 建 practice_sessions
-export function createSession(db: DatabaseSync, userId: number, targetCount: number): SessionState {
-  const sentenceIds = drawSession(db, userId, targetCount);
+export function createSession(db: DatabaseSync, userId: number, targetCount: number, config?: DrawConfig): SessionState {
+  const sentenceIds = drawSession(db, userId, targetCount, config);
   const sessionId = startSession(db, userId, targetCount);
   const state: SessionState = {
     sessionId,

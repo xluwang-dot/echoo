@@ -1,4 +1,4 @@
-// API 封装（登录 + 练习端点）
+// API 封装（登录 + 练习 + 生词本端点）
 export interface Token {
   word_id: number;
   word: string;
@@ -25,6 +25,22 @@ export interface CheckResult {
   sentenceDone: boolean;
 }
 
+export interface VocabEntry {
+  user_id: number;
+  word_id: number;
+  sentence_id: number;
+  word: string;
+  en: string;
+  zh: string;
+  created_at: string | null;
+}
+
+export interface VocabStats {
+  vocabCount: number;
+  masteredCount: number;
+  sentenceCount: number;
+}
+
 // 通用请求，带 session cookie
 async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
@@ -42,6 +58,17 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+// DELETE 请求
+async function reqDelete<T>(url: string): Promise<T> {
+  const res = await fetch(url, { method: "DELETE" });
+  if (res.status === 401) throw new Error("未登录");
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error((data as { error?: string }).error ?? `请求失败(${res.status})`);
+  }
+  return res.json() as Promise<T>;
+}
+
 export const api = {
   register: (username: string, password: string, nickname: string) =>
     req<{ id: number }>("POST", "/api/auth/register", { username, password, nickname }),
@@ -50,7 +77,8 @@ export const api = {
   logout: () => req<{ ok: boolean }>("POST", "/api/auth/logout", {}),
   me: () => req<{ id: number; username: string; nickname: string }>("GET", "/api/auth/me"),
 
-  start: (targetCount: number) => req<StartResult>("POST", "/api/practice/start", { targetCount }),
+  start: (targetCount: number, mode?: "practice" | "review") =>
+    req<StartResult>("POST", "/api/practice/start", { targetCount, mode }),
   check: (char: string) => req<CheckResult>("POST", "/api/practice/check", { char }),
   hint: () => req<{ word: string; sentenceDone: boolean }>("POST", "/api/practice/hint", {}),
   backspace: () => req<{ typed: string }>("POST", "/api/practice/backspace", {}),
@@ -60,4 +88,10 @@ export const api = {
 
   // 音频（无需登录，句子素材共享）
   audioUrl: (sentenceId: number) => `/api/audio/${sentenceId}`,
+
+  // 生词本
+  getVocab: () => req<{ vocab: VocabEntry[]; count: number }>("GET", "/api/vocab"),
+  getVocabStats: () => req<VocabStats>("GET", "/api/vocab/stats"),
+  deleteVocab: (wordId: number, sentenceId: number) =>
+    reqDelete<{ ok: boolean }>(`/api/vocab/${wordId}/${sentenceId}`),
 };

@@ -5,6 +5,7 @@ import "./style.css";
 
 import LoginView from "./views/LoginView.vue";
 import PracticeView from "./views/PracticeView.vue";
+import VocabView from "./views/VocabView.vue";
 import { api } from "./api";
 
 const router = createRouter({
@@ -13,12 +14,14 @@ const router = createRouter({
     { path: "/", redirect: "/practice" },
     { path: "/login", component: LoginView },
     { path: "/practice", component: PracticeView },
+    { path: "/vocab", component: VocabView },
   ],
 });
 
-// 守卫：/practice 需登录
+// 守卫：需登录的页面
+const authPaths = ["/practice", "/vocab"];
 router.beforeEach(async (to) => {
-  if (to.path === "/practice") {
+  if (authPaths.includes(to.path)) {
     try {
       await api.me();
     } catch {

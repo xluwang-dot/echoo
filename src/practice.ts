@@ -52,19 +52,35 @@ function sample<T>(arr: T[], n: number): T[] {
 export interface DrawConfig {
   newRatio?: number;
   reviewRatio?: number;
+  reviewOnly?: boolean; // 纯复习模式：只从生词本抽取
 }
 
 // 按比例抽取：U（未测试）: R（生词本复习）= 3:7，不足从已测试补齐（§3.3.4）
+// reviewOnly=true 时只从生词本抽取（复习模式）
 export function drawSession(
   db: DatabaseSync,
   userId: number,
   targetCount: number,
   config: DrawConfig = {}
 ): number[] {
-  const { newRatio = 3, reviewRatio = 7 } = config;
+  const { newRatio = 3, reviewRatio = 7, reviewOnly = false } = config;
   const untested = getUntestedSentenceIds(db, userId);
   const review = getReviewSentenceIds(db, userId);
   const tested = getTestedSentenceIds(db, userId);
+
+  // 纯复习模式：只从生词本抽取
+  if (reviewOnly) {
+    const result = sample(review, targetCount);
+    // 不足时从已测试补齐
+    if (result.length < targetCount) {
+      const fill = tested.filter((id) => !result.includes(id));
+      for (const id of fill) {
+        if (result.length >= targetCount) break;
+        result.push(id);
+      }
+    }
+    return result;
+  }
 
   const totalRatio = newRatio + reviewRatio;
   const newCount = Math.round((targetCount * newRatio) / totalRatio);

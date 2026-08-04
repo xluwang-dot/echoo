@@ -37,14 +37,16 @@ export function practiceRouter(db?: DatabaseSync): Router {
   const router = Router();
   const database = db ?? getDb();
 
-  // 开始练习
+  // 开始练习（mode: "practice"=默认, "review"=纯复习生词本）
   router.post("/start", requireAuth, (req, res) => {
     const targetCount = Number(req.body?.targetCount);
     if (!Number.isInteger(targetCount) || targetCount <= 0 || targetCount > MAX_TARGET) {
       res.status(400).json({ error: `targetCount 需为 1~${MAX_TARGET} 的整数` });
       return;
     }
-    const state = createSession(database, req.session.userId!, targetCount);
+    const mode = req.body?.mode === "review" ? "review" : "practice";
+    const state = createSession(database, req.session.userId!, targetCount, { reviewOnly: mode === "review" });
+    skipNameWords(state, []); // start 后 skipNameWords 需要 tokens，后面 currentTokens 里处理
     const cur = currentTokens(database, state);
     skipNameWords(state, cur.sentence.tokens);
     res.json({

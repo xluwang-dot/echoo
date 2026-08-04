@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from "vue";
+import { ref, computed, onMounted, onUnmounted, nextTick } from "vue";
 import { useRouter } from "vue-router";
 import { api, type Sentence, type Token } from "../api";
 
 const router = useRouter();
 
-// 阶段：setup（设句数）→ running（拼写）→ done（完成）
-const phase = ref<"setup" | "running" | "done">("setup");
-const targetCount = ref(20);
+// 阶段：menu（三区首页）→ running（拼写）→ done（完成）→ menu
+const phase = ref<"menu" | "running" | "done">("menu");
+const targetCount = ref(10);
+const practiceMode = ref<"practice" | "review">("practice");
 const total = ref(0);
 const sentence = ref<Sentence | null>(null);
 
@@ -28,6 +29,10 @@ let timerId: number | null = null;
 // 当日已测（本次会话内完成句子 + 用时）
 const todayList = ref<{ en: string; ms: number }[]>([]);
 const finishDone = ref(false);
+
+// 特效状态
+const slideState = ref<"idle" | "exit" | "enter">("idle");
+const streak = ref(0); // 连击：连续无提示完成的句子数
 
 // 片段：词（对应 token 下标）或原样文本（标点/空格/数字/连字符）
 interface Seg {
@@ -150,8 +155,7 @@ async function onHint() {
   busy.value = true;
   try {
     await api.hint();
-    hintSet.value.add(wordIdx.value); // 浅色显示，用户照敲
-    typed.value = "";
+    hintSet.value.add(wordIdx.value); // 浅色显示未输入部分，已输入部分保持原色
   } catch (e) {
     error.value = (e as Error).message;
   } finally {
@@ -172,24 +176,42 @@ async function finishSentence() {
   const ms = Date.now() - startMs.value;
   const r = await api.complete(wordResults);
   todayList.value.push({ en: sentence.value!.en, ms });
+
+  // 连击：本句无提示 → +1，有提示 → 归零
+  const hadHint = wordResults.some((w) => w.result === "hint");
+  streak.value = hadHint ? 0 : streak.value + 1;
+
+  // 奖励特效：纸屑 + 里程碑庆祝
+  createConfetti(streak.value >= 5 && streak.value % 5 === 0 ? 80 : 40);
+
+  // 滑动翻页：当前句向左滑出
+  slideState.value = "exit";
+  await new Promise((r) => setTimeout(r, 420));
+
   if (r.done) {
     finishDone.value = true;
     phase.value = "done";
   } else {
+    // 替换句子，新句从右侧滑入
     sentence.value = r.next!;
     wordIdx.value = r.next!.wordIdx;
     typed.value = "";
     hintSet.value = new Set();
+    await nextTick();
+    slideState.value = "enter";
+    await new Promise((r) => setTimeout(r, 420));
+    slideState.value = "idle";
     playSentence();
   }
 }
 
 // ---------- 开始/结束 ----------
-async function onStart() {
+async function onStart(mode: "practice" | "review" = "practice") {
   error.value = "";
   busy.value = true;
+  practiceMode.value = mode;
   try {
-    const r = await api.start(targetCount.value);
+    const r = await api.start(targetCount.value, mode);
     total.value = r.total;
     sentence.value = r.current;
     wordIdx.value = r.current.wordIdx;
@@ -244,6 +266,29 @@ async function playSentence() {
   }
 }
 
+// 彩色纸屑奖励特效
+const CONFETTI_COLORS = ["#ff6b6b", "#4ecdc4", "#45b7d1", "#96ceb4", "#ffeaa7", "#dda0dd", "#ff9ff3", "#48dbfb", "#feca57"];
+function createConfetti(count = 40) {
+  const container = document.querySelector(".confetti-container");
+  if (!container) return;
+  for (let i = 0; i < count; i++) {
+    const p = document.createElement("div");
+    p.className = "confetti-particle";
+    p.style.left = (40 + Math.random() * 20) + "%";
+    p.style.top = "45%";
+    p.style.backgroundColor = CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)];
+    p.style.width = (4 + Math.random() * 5) + "px";
+    p.style.height = (4 + Math.random() * 5) + "px";
+    p.style.setProperty("--tx", ((Math.random() - 0.5) * 500) + "px");
+    p.style.setProperty("--ty", (-(Math.random() * 400 + 100)) + "px");
+    p.style.setProperty("--tr", (Math.random() * 1080) + "deg");
+    p.style.setProperty("--dur", (0.8 + Math.random() * 0.8) + "s");
+    p.style.setProperty("--del", (Math.random() * 0.15) + "s");
+    container.appendChild(p);
+    setTimeout(() => p.remove(), 2200);
+  }
+}
+
 function onKeydown(e: KeyboardEvent) {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.key === "Backspace") {
@@ -266,20 +311,36 @@ onUnmounted(() => {
 
 <template>
   <div class="practice">
+    <div class="confetti-container"></div>
     <div class="main">
       <div class="topbar">
         <span class="title">背单词 · 听写</span>
-        <button class="ghost" @click="onLogout">退出</button>
+        <div class="topbar-right">
+          <span v-if="streak >= 3" class="streak-badge">🔥 连击 ×{{ streak }}</span>
+          <button class="ghost" @click="onLogout">退出</button>
+        </div>
       </div>
 
       <!-- 设置页 -->
-      <div v-if="phase === 'setup'" class="setup">
-        <h2>开始练习</h2>
-        <label>
-          本次练习句子数量
-          <input v-model.number="targetCount" type="number" min="1" max="50" />
-        </label>
-        <button :disabled="busy" @click="onStart">开始</button>
+      <!-- 三区首页 -->
+      <div v-if="phase === 'menu'" class="menu">
+        <div class="menu-cards">
+          <div class="menu-card" @click="onStart('practice')">
+            <div class="card-icon">📝</div>
+            <h2>练习</h2>
+            <p>开始新的练习，默认10个句子</p>
+          </div>
+          <div class="menu-card" @click="onStart('review')">
+            <div class="card-icon">🔄</div>
+            <h2>复习</h2>
+            <p>只复习生词本中的句子</p>
+          </div>
+          <div class="menu-card" @click="router.push('/vocab')">
+            <div class="card-icon">📖</div>
+            <h2>生词本</h2>
+            <p>查看生词本中的句子</p>
+          </div>
+        </div>
         <p v-if="error" class="error">{{ error }}</p>
       </div>
 
@@ -289,22 +350,24 @@ onUnmounted(() => {
           第 {{ todayList.length + 1 }}/{{ total }} 句 · 用时 {{ elapsedText }}
         </div>
         <div class="zh">{{ sentence?.zh }}</div>
-        <div class="en" :class="{ flash: flashError }">
-          <span v-for="(seg, i) in segments" :key="i" :class="renderSegClass(seg)">
-            <template v-if="seg.type === 'word' && isActive(seg)">
-              <span class="typed">{{ typed }}</span><span class="blank">{{ blankRemain(seg) }}</span>
-            </template>
-            <template v-else>{{ renderWord(seg) }}</template>
-          </span>
+        <div class="input-card">
+          <div class="en" :class="{ flash: flashError, 'slide-exit': slideState === 'exit', 'slide-enter': slideState === 'enter' }">
+            <span v-for="(seg, i) in segments" :key="i" :class="renderSegClass(seg)">
+              <template v-if="seg.type === 'word' && isActive(seg)">
+                <span class="typed">{{ typed }}</span><span class="blank">{{ blankRemain(seg) }}</span>
+              </template>
+              <template v-else>{{ renderWord(seg) }}</template>
+            </span>
+          </div>
+          <div class="actions">
+            <button :disabled="busy" @click="playSentence">朗读</button>
+            <button :disabled="busy" @click="onHint">提示</button>
+            <button disabled title="待接入">报告句子有误</button>
+            <button class="danger" @click="onFinish">结束</button>
+          </div>
+          <p v-if="error" class="error">{{ error }}</p>
+          <p class="tip">逐字输入英文；<code>'</code> 与 <code>-</code> 直接敲。</p>
         </div>
-        <div class="actions">
-          <button :disabled="busy" @click="playSentence">朗读</button>
-          <button :disabled="busy" @click="onHint">提示词</button>
-          <button disabled title="待接入">报告句子有误</button>
-          <button class="danger" @click="onFinish">结束</button>
-        </div>
-        <p v-if="error" class="error">{{ error }}</p>
-        <p class="tip">逐字输入英文；<code>'</code> 与 <code>-</code> 直接敲。</p>
       </div>
 
       <!-- 完成 -->
@@ -320,7 +383,10 @@ onUnmounted(() => {
             <span class="label">总用时</span>
           </div>
         </div>
-        <button @click="phase = 'setup'; sentence = null">再来一轮</button>
+        <div class="done-actions">
+          <button @click="phase = 'menu'; sentence = null">返回首页</button>
+          <button class="primary" @click="onStart(practiceMode)">再来一轮</button>
+        </div>
       </div>
     </div>
   </div>
@@ -334,6 +400,7 @@ onUnmounted(() => {
   align-items: center;
 }
 .main {
+  flex: 1;
   width: 100%;
   max-width: 860px;
   padding: 24px 28px;
@@ -355,28 +422,44 @@ onUnmounted(() => {
   color: #3b6ef6;
   border: 1px solid #3b6ef6;
 }
-.setup {
+.menu {
   margin: auto;
-  width: 340px;
-  background: #fff;
-  padding: 32px;
-  border-radius: 10px;
+  width: 100%;
+  max-width: 720px;
   text-align: center;
 }
-.setup h2 {
-  font-size: 26px;
+.menu-cards {
+  display: flex;
+  gap: 20px;
+  justify-content: center;
+}
+.menu-card {
+  flex: 1;
+  background: #fff;
+  border-radius: 16px;
+  padding: 36px 20px;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(31, 36, 48, 0.06);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.menu-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px rgba(31, 36, 48, 0.1);
+}
+.card-icon {
+  font-size: 40px;
+  margin-bottom: 12px;
+}
+.menu-card h2 {
+  font-size: 20px;
   font-weight: 700;
-  margin-bottom: 20px;
+  margin-bottom: 8px;
+  color: #1f2430;
 }
-.setup label {
-  display: block;
-  margin-bottom: 16px;
-  font-size: 16px;
-}
-.setup button {
-  width: 100%;
-  font-size: 16px;
-  padding: 12px;
+.menu-card p {
+  font-size: 13px;
+  color: #6b7382;
+  line-height: 1.5;
 }
 .progress {
   color: #6b7382;
@@ -384,8 +467,26 @@ onUnmounted(() => {
   font-size: 15px;
   text-align: center;
 }
+.spell-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  transform: translateY(-12%);
+}
+.input-card {
+  background: #fff;
+  border-radius: 20px;
+  box-shadow: 0 8px 30px rgba(31, 36, 48, 0.08);
+  padding: 28px 36px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: fit-content;
+  min-width: 360px;
+}
 .zh {
-  font-size: 24px;
+  font-size: 34px;
   font-weight: 700;
   margin-bottom: 28px;
   text-align: center;
@@ -397,7 +498,8 @@ onUnmounted(() => {
   font-family: "Courier New", monospace;
   min-height: 80px;
   text-align: center;
-  white-space: pre;
+  white-space: pre-wrap;
+  word-break: keep-all;
 }
 .en > span {
   display: inline-block;
@@ -425,7 +527,7 @@ onUnmounted(() => {
   background: #f0f0f4;
 }
 .en .hint-active .typed {
-  color: #d66;
+  color: #1f2430;
 }
 .en .hint-active .blank {
   color: #bbb;
@@ -514,5 +616,82 @@ onUnmounted(() => {
 .done button {
   font-size: 16px;
   padding: 12px 32px;
+}
+.done-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+.done-actions .primary {
+  background: #3b6ef6;
+  color: #fff;
+}
+
+/* ---- 顶栏右侧 ---- */
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* ---- 连击徽章 ---- */
+.streak-badge {
+  background: linear-gradient(135deg, #ff6b6b, #ff9ff3);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  padding: 4px 14px;
+  border-radius: 20px;
+  animation: streak-pulse 1.2s ease-in-out infinite;
+}
+@keyframes streak-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.08); }
+}
+
+/* ---- 滑动翻页 ---- */
+.slide-exit {
+  animation: slide-out 0.4s ease-in forwards;
+}
+.slide-enter {
+  animation: slide-in 0.4s ease-out forwards;
+}
+@keyframes slide-out {
+  0% { transform: translateX(0); opacity: 1; }
+  100% { transform: translateX(-60px); opacity: 0; }
+}
+@keyframes slide-in {
+  0% { transform: translateX(60px); opacity: 0; }
+  100% { transform: translateX(0); opacity: 1; }
+}
+
+/* ---- 彩色纸屑 ---- */
+.confetti-container {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
+  z-index: 999;
+  overflow: hidden;
+}
+.confetti-particle {
+  position: absolute;
+  border-radius: 2px;
+  pointer-events: none;
+  opacity: 0;
+  animation: confetti-burst var(--dur) ease-out var(--del) forwards;
+}
+@keyframes confetti-burst {
+  0% {
+    transform: translate(0, 0) rotate(0deg);
+    opacity: 1;
+  }
+  60% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--tx), var(--ty)) rotate(var(--tr));
+    opacity: 0;
+  }
 }
 </style>

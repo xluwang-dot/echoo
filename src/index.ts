@@ -6,6 +6,7 @@ import { configureSession } from "./sessionStore.js";
 import { authRouter } from "./routes/auth.js";
 import { practiceRouter } from "./routes/practice.js";
 import { audioRouter } from "./routes/audio.js";
+import { vocabRouter } from "./routes/vocab.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 
@@ -24,6 +25,7 @@ app.get("/health", (_req, res) => {
 app.use("/api/auth", authRouter());
 app.use("/api/practice", practiceRouter());
 app.use("/api/audio", audioRouter());
+app.use("/api/vocab", vocabRouter());
 
 app.listen(PORT, () => {
   console.log(`word-typer 服务已启动: http://localhost:${PORT}`);
