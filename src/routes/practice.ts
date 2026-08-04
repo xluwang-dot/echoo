@@ -45,7 +45,11 @@ export function practiceRouter(db?: DatabaseSync): Router {
       return;
     }
     const mode = req.body?.mode === "review" ? "review" : "practice";
-    const state = createSession(database, req.session.userId!, targetCount, { reviewOnly: mode === "review" });
+    const state = createSession(database, req.session.userId!, targetCount, {
+      newRatio: mode === "practice" ? 10 : 0,
+      reviewRatio: mode === "review" ? 10 : 0,
+      reviewOnly: mode === "review",
+    });
     skipNameWords(state, []); // start 后 skipNameWords 需要 tokens，后面 currentTokens 里处理
     const cur = currentTokens(database, state);
     skipNameWords(state, cur.sentence.tokens);
