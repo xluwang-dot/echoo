@@ -373,6 +373,9 @@ function createConfetti(count = 40) {
 
 function onKeydown(e: KeyboardEvent) {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
+  // B0002：输入控件（textarea/input）内放行，避免全局监听拦截浏览器默认行为（报告描述输入框等）
+  const t = e.target as HTMLElement | null;
+  if (t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT")) return;
   if (e.key === "Backspace") {
     e.preventDefault();
     onBackspace();
