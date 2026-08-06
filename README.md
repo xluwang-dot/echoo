@@ -31,12 +31,13 @@
 │   └── practiceSession.ts  # 练习会话状态机
 ├── web/               # Vue 3 前端
 │   └── src/views/     # LoginView / PracticeView / VocabView
-├── tts_service/       # TTS 音频生成（Python）
 ├── tests/             # 后端 vitest 测试
 ├── docs/tts_ref/      # TTS 参考脚本
 ├── res/               # 词表/真题/句子素材（git 排除）
 └── data/              # 运行时产物：SQLite 库 + 音频（git 排除）
 ```
+
+> `tts_service/`（TTS 音频生成）与 `scripts/`（词表/句子池生成脚本）为**本地内容生产工具**，不入库；克隆仓库后如需重建素材/音频，请从本地拷贝这两个目录。
 
 ## 快速开始
 
@@ -80,6 +81,8 @@ npm run build --prefix web       # 前端产物在 web/dist/
 
 ## TTS 音频生成
 
+> `tts_service/` 为本地内容生产工具（不入库，需从本地拷贝；依赖 MIMO API Key）。
+
 全量音频已预生成于 `data/audio/`（1405 句）。如需自行合成/补齐：
 
 ```bash
@@ -93,8 +96,8 @@ MIMO_API_KEY=xxx python3 gen_audio.py --limit 10   # 生成 10 句；不带 --li
 ## 测试
 
 ```bash
-npm test                          # 后端 vitest（87 用例）
-cd tts_service && python3 -m unittest test_gen_audio   # TTS 测试（8 用例）
+npm test                          # 后端 vitest（90 用例）
+cd tts_service && python3 -m unittest test_gen_audio   # 本地 TTS 工具测试（8 用例）
 ```
 
 ## API 概要

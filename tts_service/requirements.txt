@@ -1,6 +1,0 @@
-openai
-
-# 安装（本机 conda 无 venv，PEP 668 系统 Python 受限 → 用 --user 装用户级）：
-#   python3 -m pip install --user --break-system-packages -r requirements.txt
-# 运行：
-#   MIMO_API_KEY=xxx python3 gen_audio.py --limit 10
