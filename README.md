@@ -119,6 +119,6 @@ cd tts_service && python3 -m unittest test_gen_audio   # TTS 测试（8 用例�
 
 ## 后续规划
 
-- 单词语音（Whisper 词级对齐，点当前词单独发音）
+- ~~单词语音（Whisper 词级对齐，点当前词单独发音）~~：已移入创意池（T015），后续版本再评估
 - 「当日已测」列表重听按钮
 - 报告句子有误
