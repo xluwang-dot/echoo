@@ -41,5 +41,5 @@ if (fs.existsSync(WEB_DIST)) {
 }
 
 app.listen(PORT, () => {
-  console.log(`word-typer 服务已启动: http://localhost:${PORT}`);
+  console.log(`echoo 服务已启动: http://localhost:${PORT}`);
 });

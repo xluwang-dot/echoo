@@ -1,7 +1,7 @@
 {
-  "name": "word-typer",
+  "name": "echoo",
   "version": "0.1.0",
-  "description": "在线背单词平台 — 听写句子定位生词（TS 主后端）",
+  "description": "echoo 在线背单词平台 — 听写句子定位生词（TS 主后端）",
   "type": "module",
   "private": true,
   "license": "ISC",

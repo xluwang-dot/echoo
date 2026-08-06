@@ -1,7 +1,7 @@
 // 会话配置（T007）
 import session from "express-session";
 
-const SESSION_SECRET = process.env.SESSION_SECRET ?? "word-typer-dev-secret";
+const SESSION_SECRET = process.env.SESSION_SECRET ?? "echoo-dev-secret";
 
 declare module "express-session" {
   interface SessionData {

@@ -41,7 +41,7 @@ async function submit() {
 <template>
   <div class="login-wrap">
     <div class="login-card">
-      <h1>背单词平台</h1>
+      <h1>echoo · 背单词平台</h1>
       <div class="tabs">
         <button :class="{ active: mode === 'login' }" @click="mode = 'login'">登录</button>
         <button :class="{ active: mode === 'register' }" @click="mode = 'register'">注册</button>
