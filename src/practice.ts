@@ -58,6 +58,40 @@ function sample<T>(arr: T[], n: number): T[] {
   return out;
 }
 
+// ---------- 复习调度（T027：SM-2 间隔重复，需求 §3.2.3/§3.3）----------
+export const REVIEW_INTERVALS = [1, 3, 7, 16, 35]; // 间隔序列（天）
+export const MASTERY_THRESHOLD = 5; // 掌握阈值：连续成功次数
+
+// 日期 YYYY-MM-DD（本地时区）
+function dateStr(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+function todayStr(): string {
+  return dateStr(new Date());
+}
+function addDays(days: number): string {
+  return dateStr(new Date(Date.now() + days * 86400000));
+}
+
+// 间隔推进：ok=拼对（按序列前进、连续成功 +1）；失败/提示 → 重置 1 天、清零
+export function advanceInterval(reviewCount: number, ok: boolean): { interval: number; reviewCount: number } {
+  if (!ok) return { interval: 1, reviewCount: 0 };
+  const next = reviewCount + 1;
+  const interval = REVIEW_INTERVALS[Math.min(next - 1, REVIEW_INTERVALS.length - 1)];
+  return { interval, reviewCount: next };
+}
+
+// 到期词句对所在句子（learning 且 next_review ≤ 今日）
+export function getDueReviewSentenceIds(db: DatabaseSync, userId: number): number[] {
+  const rows = db
+    .prepare(
+      "SELECT DISTINCT sentence_id FROM user_vocab WHERE user_id=? AND status='learning' AND next_review IS NOT NULL AND next_review <= ?"
+    )
+    .all(userId, todayStr()) as { sentence_id: number }[];
+  return rows.map((r) => r.sentence_id);
+}
+
 export interface DrawConfig {
   newRatio?: number;
   reviewRatio?: number;
@@ -79,12 +113,13 @@ export function drawSession(
   const review = getReviewSentenceIds(db, userId).filter((id) => !reported.has(id));
   const tested = getTestedSentenceIds(db, userId).filter((id) => !reported.has(id));
 
-  // 纯复习模式：只从生词本抽取
+  // 纯复习模式：只从生词本抽取（T027：到期优先）
   if (reviewOnly) {
-    const result = sample(review, targetCount);
-    // 不足时从已测试补齐
+    const due = getDueReviewSentenceIds(db, userId).filter((id) => !reported.has(id));
+    const result = sample(due, targetCount);
+    // 不足时从生词本其余句子补齐
     if (result.length < targetCount) {
-      const fill = tested.filter((id) => !result.includes(id));
+      const fill = review.filter((id) => !result.includes(id));
       for (const id of fill) {
         if (result.length >= targetCount) break;
         result.push(id);
@@ -164,7 +199,8 @@ export function finishSession(db: DatabaseSync, sessionId: number, doneCount: nu
   ).run(new Date().toISOString(), doneCount, totalMs, sessionId);
 }
 
-// 记录单词结果：mastered → 已掌握；hint → 入生词本（词+句）。始终写 test_records。
+// 记录单词结果：mastered → 词句对间隔推进（达阈值标掌握）；hint → 入本/重置。始终写 test_records。
+// T027：不再「整句拼对即移除」，掌握判定由词句对连续成功驱动（§3.2.3）
 export function recordWord(
   db: DatabaseSync,
   sessionId: number,
@@ -173,19 +209,36 @@ export function recordWord(
   sentenceId: number,
   result: WordResult
 ): void {
+  const now = new Date().toISOString();
   if (result === "mastered") {
+    const pair = db
+      .prepare("SELECT interval, review_count, status FROM user_vocab WHERE user_id=? AND word_id=? AND sentence_id=?")
+      .get(userId, wordId, sentenceId) as { interval: number; review_count: number; status: string } | undefined;
+    if (pair) {
+      // 词句对推进：间隔前进、连续成功 +1，达阈值标 mastered
+      const { interval, reviewCount } = advanceInterval(pair.review_count, true);
+      const mastered = reviewCount >= MASTERY_THRESHOLD;
+      db.prepare(
+        "UPDATE user_vocab SET interval=?, review_count=?, next_review=?, status=? WHERE user_id=? AND word_id=? AND sentence_id=?"
+      ).run(interval, reviewCount, addDays(interval), mastered ? "mastered" : "learning", userId, wordId, sentenceId);
+    }
+    // 统计展示（word_status，与生词本判定独立）
     db.prepare(
       `INSERT INTO word_status (user_id, word_id, status, updated_at) VALUES (?, ?, 'mastered', ?)
        ON CONFLICT(user_id, word_id) DO UPDATE SET status='mastered', updated_at=excluded.updated_at`
-    ).run(userId, wordId, new Date().toISOString());
+    ).run(userId, wordId, now);
   } else {
+    // hint：入本（如不在）+ 重置间隔（失败语义，§3.2.3）
     db.prepare(
-      "INSERT OR IGNORE INTO user_vocab (user_id, word_id, sentence_id, created_at) VALUES (?, ?, ?, ?)"
-    ).run(userId, wordId, sentenceId, new Date().toISOString());
+      "INSERT OR IGNORE INTO user_vocab (user_id, word_id, sentence_id, created_at, interval, review_count, next_review, status) VALUES (?, ?, ?, ?, 1, 0, ?, 'learning')"
+    ).run(userId, wordId, sentenceId, now, addDays(1));
+    db.prepare(
+      "UPDATE user_vocab SET interval=1, review_count=0, next_review=? WHERE user_id=? AND word_id=? AND sentence_id=?"
+    ).run(addDays(1), userId, wordId, sentenceId);
   }
   db.prepare(
     "INSERT INTO test_records (session_id, user_id, word_id, sentence_id, time, result) VALUES (?, ?, ?, ?, ?, ?)"
-  ).run(sessionId, userId, wordId, sentenceId, new Date().toISOString(), result);
+  ).run(sessionId, userId, wordId, sentenceId, now, result);
 }
 
 export interface WordOutcome {
@@ -193,7 +246,8 @@ export interface WordOutcome {
   result: WordResult;
 }
 
-// 整句完成：逐词落库；若该句在生词本且全拼对 → 移除该句所有词句对（§3.2.3）
+// 整句完成：逐词落库（recordWord 按词句对推进间隔/重置，达阈值标掌握）
+// T027：掌握判定由词句对连续成功驱动，不再「整句拼对即整句删除」
 export function completeSentence(
   db: DatabaseSync,
   sessionId: number,
@@ -203,10 +257,6 @@ export function completeSentence(
 ): void {
   for (const o of outcomes) {
     recordWord(db, sessionId, userId, o.wordId, sentenceId, o.result);
-  }
-  // 若该句在生词本且本次全部正确拼写（无 hint）→ 整句移除
-  if (outcomes.length > 0 && outcomes.every((o) => o.result === "mastered")) {
-    db.prepare("DELETE FROM user_vocab WHERE user_id = ? AND sentence_id = ?").run(userId, sentenceId);
   }
 }
 

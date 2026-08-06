@@ -176,8 +176,8 @@ describe("T010 practice HTTP API", () => {
     expect(res.status).toBe(409);
   });
 
-  it("整句完成且句中词在生词本 → 该句词句对移除", async () => {
-    // 先把 bar 放入生词本
+  it("整句完成且句中词在生词本 → 词句对推进不删除（T027）", async () => {
+    // 先把 foo 放入生词本
     await agent.post("/api/practice/start").send({ targetCount: 1 });
     await agent.post("/api/practice/hint").send({}); // hint 第 0 词 foo
     await agent.post("/api/practice/complete").send({
@@ -186,9 +186,12 @@ describe("T010 practice HTTP API", () => {
         { wordId: widBar, result: "mastered" },
       ],
     });
-    // foo 的 hint 已入生词本，整句拼对后应移除
-    const uv = db.prepare("SELECT COUNT(*) AS c FROM user_vocab").get() as { c: number };
-    expect(uv.c).toBe(0);
+    // v1.9：整句拼对不再移除词句对；foo 仍在生词本且连续成功 =1
+    const alice = db.prepare("SELECT id FROM users WHERE username = ?").get("alice") as { id: number };
+    const v = db.prepare("SELECT review_count, status FROM user_vocab WHERE user_id=? AND word_id=? AND sentence_id=?").get(alice.id, widFoo, sid1) as { review_count: number; status: string };
+    expect(v).toBeTruthy();
+    expect(v.review_count).toBe(1);
+    expect(v.status).toBe("learning");
   });
 
   it("finish 手动结束：计时落库 + 状态清空", async () => {
