@@ -4,7 +4,8 @@
 
 ## 功能
 
-- **练习**：随机抽句（默认未掌握:生词本 = 3:7），展示汉译并朗读整句，用户逐字符拼写单词，拼对自动前进。
+- **练习**：只从未测试句子抽取（学新内容），展示汉译并朗读整句，用户逐字符拼写单词，拼对自动前进。
+- **复习**：只从生词本句子抽取（巩固薄弱点），仅默写生词本中的词，已掌握词自动跳过。
 - **生词本**：拼不出的词点「提示词」即入生词本（保存「单词 + 所在句子」）；复习句整句拼对后自动移除，被提示过的词保留在生词本。
 - **人名免拼写**：人名词（如 Tom）直接显示，不计入掌握统计。
 - **语音朗读**：全句真人女声（mimo TTS），`/api/audio/:sentenceId` 提供 WAV 播放。
@@ -18,7 +19,7 @@
 | 后端 | Node.js + TypeScript + Express 5 + `node:sqlite` + express-session（内存存储） |
 | 前端 | Vue 3 + Vite + Vue Router（history 模式，无 UI 库） |
 | TTS | 独立 Python 脚本，调用 mimo-v2.5-tts 接口（女声 Mia）合成整句音频 |
-| 测试 | Vitest（后端 66 用例）+ Python `unittest`（TTS 8 用例） |
+| 测试 | Vitest（后端 87 用例）+ Python `unittest`（TTS 8 用例） |
 
 ## 目录结构
 
@@ -29,7 +30,7 @@
 │   ├── practice.ts    # 句子/词/token 处理
 │   └── practiceSession.ts  # 练习会话状态机
 ├── web/               # Vue 3 前端
-│   └── src/views/     # LoginView / PracticeView
+│   └── src/views/     # LoginView / PracticeView / VocabView
 ├── tts_service/       # TTS 音频生成（Python）
 ├── tests/             # 后端 vitest 测试
 ├── docs/tts_ref/      # TTS 参考脚本
@@ -92,7 +93,7 @@ MIMO_API_KEY=xxx python3 gen_audio.py --limit 10   # 生成 10 句；不带 --li
 ## 测试
 
 ```bash
-npm test                          # 后端 vitest（66 用例）
+npm test                          # 后端 vitest（87 用例）
 cd tts_service && python3 -m unittest test_gen_audio   # TTS 测试（8 用例）
 ```
 
@@ -104,8 +105,9 @@ cd tts_service && python3 -m unittest test_gen_audio   # TTS 测试（8 用例�
 | POST | `/api/auth/login` | 登录（session） |
 | POST | `/api/auth/logout` | 登出 |
 | GET | `/api/auth/me` | 当前用户 |
-| POST | `/api/practice/start` | 开始练习（body: `targetCount`） |
+| POST | `/api/practice/start` | 开始练习（body: `targetCount` + 可选 `mode`：`practice` 练习/`review` 复习） |
 | POST | `/api/practice/check` | 提交一个字符（body: `{char}`） |
+| POST | `/api/practice/backspace` | 退格（删除当前词最后字符） |
 | POST | `/api/practice/hint` | 提示当前词（词+句入生词本） |
 | POST | `/api/practice/complete` | 完成当前句（body: `wordResults`） |
 | POST | `/api/practice/finish` | 结束练习 |
