@@ -210,5 +210,23 @@ export function practiceRouter(db?: DatabaseSync): Router {
     res.json({ ok: true, done: state.idx });
   });
 
+  // 报告句子有误（§3.6）：写入待处理队列（sentence_reports，status=pending）
+  router.post("/report", requireAuth, (req, res) => {
+    const sentenceId = Number(req.body?.sentenceId);
+    if (!Number.isInteger(sentenceId) || sentenceId <= 0) {
+      res.status(400).json({ error: "sentenceId 需为正整数" });
+      return;
+    }
+    const exists = database.prepare("SELECT id FROM sentences WHERE id = ?").get(sentenceId);
+    if (!exists) {
+      res.status(404).json({ error: "句子不存在" });
+      return;
+    }
+    const result = database
+      .prepare("INSERT INTO sentence_reports (sentence_id, user_id, time, status) VALUES (?, ?, ?, 'pending')")
+      .run(sentenceId, req.session.userId!, new Date().toISOString());
+    res.json({ ok: true, reportId: result.lastInsertRowid });
+  });
+
   return router;
 }

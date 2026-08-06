@@ -204,6 +204,36 @@ describe("T010 practice HTTP API", () => {
     const res = await agent.post("/api/practice/check").send({ char: "x" });
     expect(res.status).toBe(409);
   });
+
+  it("report 报告句子：登录后上报 → 200 + 落库 pending（T017）", async () => {
+    const res = await agent.post("/api/practice/report").send({ sentenceId: sid1 });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    const alice = db.prepare("SELECT id FROM users WHERE username = ?").get("alice") as { id: number };
+    const row = db.prepare("SELECT * FROM sentence_reports WHERE sentence_id = ?").get(sid1) as { user_id: number; status: string };
+    expect(row.user_id).toBe(alice.id);
+    expect(row.status).toBe("pending");
+  });
+
+  it("report 未登录 → 401", async () => {
+    const anon = request.agent(app);
+    const res = await anon.post("/api/practice/report").send({ sentenceId: sid1 });
+    expect(res.status).toBe(401);
+  });
+
+  it("report 句子不存在 → 404", async () => {
+    const res = await agent.post("/api/practice/report").send({ sentenceId: 99999 });
+    expect(res.status).toBe(404);
+  });
+
+  it("report sentenceId 非法 → 400", async () => {
+    const r1 = await agent.post("/api/practice/report").send({ sentenceId: "abc" });
+    expect(r1.status).toBe(400);
+    const r2 = await agent.post("/api/practice/report").send({ sentenceId: 0 });
+    expect(r2.status).toBe(400);
+    const r3 = await agent.post("/api/practice/report").send({});
+    expect(r3.status).toBe(400);
+  });
 });
 
 describe("T014 复习模式：跳过非生词（T016 收尾）", () => {

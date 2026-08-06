@@ -18,6 +18,8 @@ const typed = ref(""); // 当前词已输入字符
 const hintSet = ref<Set<number>>(new Set()); // 本句已提示词的 token 下标
 const flashError = ref(false); // 错误红闪
 const error = ref("");
+const reportInfo = ref(""); // 报告句子成功的短暂反馈
+let reportTimer: number | null = null;
 const busy = ref(false);
 
 // 计时
@@ -204,6 +206,22 @@ async function onHint() {
   try {
     await api.hint();
     hintSet.value.add(wordIdx.value); // 浅色显示未输入部分，已输入部分保持原色
+  } catch (e) {
+    error.value = (e as Error).message;
+  } finally {
+    busy.value = false;
+  }
+}
+
+// 报告句子有误（§3.6）：上报当前句，短暂反馈
+async function onReport() {
+  if (phase.value !== "running" || busy.value) return;
+  busy.value = true;
+  try {
+    await api.report(sentence.value!.sentenceId);
+    reportInfo.value = "已上报，感谢反馈 🙏";
+    if (reportTimer) clearTimeout(reportTimer);
+    reportTimer = window.setTimeout(() => (reportInfo.value = ""), 3000);
   } catch (e) {
     error.value = (e as Error).message;
   } finally {
@@ -413,9 +431,10 @@ onUnmounted(() => {
           <div class="actions">
             <button :disabled="busy" @click="playSentence">朗读</button>
             <button :disabled="busy" @click="onHint">提示</button>
-            <button disabled title="待接入">报告句子有误</button>
+            <button :disabled="busy" @click="onReport">报告句子有误</button>
             <button class="danger" @click="onFinish">结束</button>
           </div>
+          <p v-if="reportInfo" class="info">{{ reportInfo }}</p>
           <p v-if="error" class="error">{{ error }}</p>
           <p class="tip">逐字输入英文；<code>'</code> 与 <code>-</code> 直接敲。</p>
         </div>
@@ -628,6 +647,11 @@ onUnmounted(() => {
 }
 .error {
   color: #d33;
+  margin-top: 10px;
+  text-align: center;
+}
+.info {
+  color: #2a7d32;
   margin-top: 10px;
   text-align: center;
 }

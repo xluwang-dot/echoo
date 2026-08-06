@@ -55,7 +55,7 @@ afterAll(() => {
 describe("T009 practice 抽取", () => {
   beforeEach(() => {
     // 每个用例前重置句子/词/记录（保留用户）
-    db.exec("DELETE FROM test_records; DELETE FROM practice_sessions; DELETE FROM sentence_words; DELETE FROM sentences; DELETE FROM words;");
+    db.exec("DELETE FROM test_records; DELETE FROM practice_sessions; DELETE FROM sentence_reports; DELETE FROM sentence_words; DELETE FROM sentences; DELETE FROM words;");
     sid1 = db.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("foo bar.", "foo 和 bar。").lastInsertRowid as number;
     sid2 = db.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("baz qux.", "baz 和 qux。").lastInsertRowid as number;
     sid3 = db.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("quux corge.", "quux 和 corge。").lastInsertRowid as number;
@@ -118,6 +118,38 @@ describe("T009 practice 抽取", () => {
     expect(idsA.length).toBe(3);
     // A 的未测试句应不含因 B 产生的差异 —— 全 3 句未测试，都能抽到
     expect(idsA.every((id) => [sid1, sid2, sid3].includes(id))).toBe(true);
+  });
+
+  it("被报告句子：常规池充足时不抽到（优先规避，T017）", () => {
+    // 报告 sid1
+    db.prepare("INSERT INTO sentence_reports (sentence_id, user_id, time, status) VALUES (?, ?, ?, 'pending')").run(sid1, userA, "2026-08-05T00:00:00Z");
+    // 未测试池 {sid1,sid2,sid3}，剔除 sid1 后 target=2 应抽 sid2/sid3
+    const ids = drawSession(db, userA, 2);
+    expect(ids.length).toBe(2);
+    expect(ids).not.toContain(sid1);
+    // 多次抽取也不含（稳定规避）
+    for (let i = 0; i < 5; i++) {
+      const again = drawSession(db, userA, 2);
+      expect(again).not.toContain(sid1);
+    }
+  });
+
+  it("被报告句子：常规池耗尽时兜底可抽到（不再出现无题可练，T017）", () => {
+    // 全部标记已测试 + 全部被报告 → 常规池空
+    const sid = startSession(db, userA, 3);
+    recordWord(db, sid, userA, widFoo, sid1, "mastered");
+    recordWord(db, sid, userA, widBar, sid1, "mastered");
+    recordWord(db, sid, userA, widBaz, sid2, "mastered");
+    recordWord(db, sid, userA, widFoo, sid2, "mastered");
+    recordWord(db, sid, userA, widBaz, sid3, "mastered");
+    recordWord(db, sid, userA, widFoo, sid3, "mastered");
+    finishSession(db, sid, 3, 1000);
+    for (const s of [sid1, sid2, sid3]) {
+      db.prepare("INSERT INTO sentence_reports (sentence_id, user_id, time, status) VALUES (?, ?, ?, 'pending')").run(s, userA, "2026-08-05T00:00:00Z");
+    }
+    const ids = drawSession(db, userA, 3);
+    expect(ids.length).toBe(3); // 常规池空 → 兜底抽被报告句
+    expect(ids.every((id) => [sid1, sid2, sid3].includes(id))).toBe(true);
   });
 });
 

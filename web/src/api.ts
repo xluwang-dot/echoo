@@ -86,6 +86,8 @@ export const api = {
   complete: (wordResults: { wordId: number; result: string }[]) =>
     req<{ done: boolean; next?: Sentence }>("POST", "/api/practice/complete", { wordResults }),
   finish: () => req<{ ok: boolean; done: number }>("POST", "/api/practice/finish", {}),
+  report: (sentenceId: number) =>
+    req<{ ok: boolean; reportId: number }>("POST", "/api/practice/report", { sentenceId }),
 
   // 音频（无需登录，句子素材共享）
   audioUrl: (sentenceId: number) => `/api/audio/${sentenceId}`,

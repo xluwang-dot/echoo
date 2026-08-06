@@ -9,6 +9,7 @@
 - **人名免拼写**：人名词（如 Tom）直接显示，不计入掌握统计。
 - **语音朗读**：全句真人女声（mimo TTS），`/api/audio/:sentenceId` 提供 WAV 播放。
 - **会话计时**：每次练习记录用时，统计当天已测句子。
+- **报告句子有误**：发现句子不完整/翻译有误/OCR 错误可上报（入待处理队列），被报告句后续抽取优先规避。
 
 ## 技术栈
 
@@ -108,6 +109,7 @@ cd tts_service && python3 -m unittest test_gen_audio   # TTS 测试（8 用例�
 | POST | `/api/practice/hint` | 提示当前词（词+句入生词本） |
 | POST | `/api/practice/complete` | 完成当前句（body: `wordResults`） |
 | POST | `/api/practice/finish` | 结束练习 |
+| POST | `/api/practice/report` | 报告句子有误（body: `{sentenceId}`，入待处理队列） |
 | GET | `/api/audio/:sentenceId` | 整句朗读 WAV（无需登录） |
 
 除 `/api/audio/*` 外均需登录（session Cookie）。
@@ -121,4 +123,4 @@ cd tts_service && python3 -m unittest test_gen_audio   # TTS 测试（8 用例�
 
 - ~~单词语音（Whisper 词级对齐，点当前词单独发音）~~：已移入创意池（T015），后续版本再评估
 - 「当日已测」列表重听按钮
-- 报告句子有误
+- 报告句子的管理侧「处理」功能（status → handled、后台列表）

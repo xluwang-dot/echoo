@@ -30,6 +30,15 @@ export function getUntestedSentenceIds(db: DatabaseSync, userId: number): number
 }
 
 // 生词本涉及的句子 id
+// 被报告句子 id（≥1 次报告即进入规避池；句子问题对所有用户一致）
+export function getReportedSentenceIds(db: DatabaseSync): number[] {
+  const rows = db
+    .prepare("SELECT DISTINCT sentence_id FROM sentence_reports WHERE sentence_id IS NOT NULL")
+    .all() as { sentence_id: number }[];
+  return rows.map((r) => r.sentence_id);
+}
+
+// 生词本涉及的句子 id
 export function getReviewSentenceIds(db: DatabaseSync, userId: number): number[] {
   const rows = db
     .prepare("SELECT DISTINCT sentence_id FROM user_vocab WHERE user_id = ?")
@@ -64,9 +73,11 @@ export function drawSession(
   config: DrawConfig = {}
 ): number[] {
   const { newRatio = 3, reviewRatio = 7, reviewOnly = false } = config;
-  const untested = getUntestedSentenceIds(db, userId);
-  const review = getReviewSentenceIds(db, userId);
-  const tested = getTestedSentenceIds(db, userId);
+  // 被报告句子：常规池剔除、放兜底末尾（§3.6 优先规避）
+  const reported = new Set(getReportedSentenceIds(db));
+  const untested = getUntestedSentenceIds(db, userId).filter((id) => !reported.has(id));
+  const review = getReviewSentenceIds(db, userId).filter((id) => !reported.has(id));
+  const tested = getTestedSentenceIds(db, userId).filter((id) => !reported.has(id));
 
   // 纯复习模式：只从生词本抽取
   if (reviewOnly) {
@@ -75,6 +86,14 @@ export function drawSession(
     if (result.length < targetCount) {
       const fill = tested.filter((id) => !result.includes(id));
       for (const id of fill) {
+        if (result.length >= targetCount) break;
+        result.push(id);
+      }
+    }
+    // 仍不足：被报告句子兜底（常规池耗尽才用）
+    if (result.length < targetCount) {
+      const fillReported = [...reported].filter((id) => !result.includes(id));
+      for (const id of fillReported) {
         if (result.length >= targetCount) break;
         result.push(id);
       }
@@ -102,11 +121,12 @@ export function drawSession(
   push(fromNew);
   push(fromReview);
 
-  // 补齐顺序：未测试剩余 → 生词本剩余 → 已测试剩余
+  // 补齐顺序：未测试剩余 → 生词本剩余 → 已测试剩余 → 被报告句子（§3.6 优先规避，常规池耗尽才用）
   const fillNew = untested.filter((id) => !seen.has(id));
   const fillReview = review.filter((id) => !seen.has(id));
   const fillTested = tested.filter((id) => !seen.has(id));
-  for (const id of [...fillNew, ...fillReview, ...fillTested]) {
+  const fillReported = [...reported].filter((id) => !seen.has(id));
+  for (const id of [...fillNew, ...fillReview, ...fillTested, ...fillReported]) {
     if (result.length >= targetCount) break;
     seen.add(id);
     result.push(id);
