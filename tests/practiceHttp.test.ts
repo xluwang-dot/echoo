@@ -10,7 +10,8 @@ import { configureSession } from "../src/sessionStore.js";
 import { authRouter } from "../src/routes/auth.js";
 import { practiceRouter } from "../src/routes/practice.js";
 import { hashPassword } from "../src/auth.js";
-import { resetSessionStore } from "../src/practiceSession.js";
+import { resetSessionStore, createSession, getSession } from "../src/practiceSession.js";
+import { addVocab } from "../src/vocab.js";
 
 const TEST_DB = path.join(os.tmpdir(), "word_typer_test_t010.db");
 let db: DatabaseSync;
@@ -202,5 +203,112 @@ describe("T010 practice HTTP API", () => {
   it("未开始会话调用 check → 409", async () => {
     const res = await agent.post("/api/practice/check").send({ char: "x" });
     expect(res.status).toBe(409);
+  });
+});
+
+describe("T014 复习模式：跳过非生词（T016 收尾）", () => {
+  // T010 的 afterAll 已关闭共用 db，这里独立建库 + 独立 app/登录态
+  const TEST_DB2 = path.join(os.tmpdir(), "word_typer_test_t016.db");
+  let db2: DatabaseSync;
+  let app2: express.Express;
+  let agent2: request.Agent;
+  let s2: number; // alpha beta gamma.（beta 生词）
+  let s3: number; // alpha Tom beta.（Tom 人名，beta 生词）
+
+  beforeAll(async () => {
+    db2 = freshDb();
+    db2.prepare("INSERT INTO users (username, password_hash) VALUES (?, ?)").run("alice", hashPassword("a123456"));
+    app2 = express();
+    app2.use(express.json());
+    app2.use(configureSession());
+    app2.use("/api/auth", authRouter(db2));
+    app2.use("/api/practice", practiceRouter(db2));
+    agent2 = request.agent(app2);
+    const r = await agent2.post("/api/auth/login").send({ username: "alice", password: "a123456" });
+    expect(r.status).toBe(200);
+  });
+  afterAll(() => {
+    db2.close();
+    if (fs.existsSync(TEST_DB2)) fs.unlinkSync(TEST_DB2);
+  });
+
+  // 重建句子数据（保留用户），供各用例独立使用
+  function seedSentences(): void {
+    db2.exec(
+      "DELETE FROM test_records; DELETE FROM practice_sessions; DELETE FROM user_vocab; DELETE FROM word_status; DELETE FROM sentence_words; DELETE FROM sentences; DELETE FROM words;"
+    );
+    const widAlpha = db2.prepare("INSERT INTO words (word) VALUES (?)").run("alpha").lastInsertRowid as number;
+    const widBeta = db2.prepare("INSERT INTO words (word) VALUES (?)").run("beta").lastInsertRowid as number;
+    const widGamma = db2.prepare("INSERT INTO words (word) VALUES (?)").run("gamma").lastInsertRowid as number;
+    const widTom = db2.prepare("INSERT INTO words (word, is_name) VALUES (?, 1)").run("Tom").lastInsertRowid as number;
+    s2 = db2.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("alpha beta gamma.", "alpha、beta 与 gamma。").lastInsertRowid as number;
+    s3 = db2.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("alpha Tom beta.", "alpha、Tom 与 beta。").lastInsertRowid as number;
+    // s2: alpha(0) beta(1) gamma(2)
+    db2.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(s2, widAlpha, 0, 0);
+    db2.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(s2, widBeta, 1, 0);
+    db2.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(s2, widGamma, 2, 0);
+    // s3: alpha(0) Tom(1) beta(2)
+    db2.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(s3, widAlpha, 0, 0);
+    db2.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(s3, widTom, 1, 0);
+    db2.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(s3, widBeta, 2, 0);
+  }
+
+  // 取 alice 的 userId 与 beta 的 wordId，并把 beta 加入生词本
+  function addBetaToVocab(sentenceId: number): void {
+    const alice = db2.prepare("SELECT id FROM users WHERE username = ?").get("alice") as { id: number };
+    const widBeta = db2.prepare("SELECT id FROM words WHERE word = ?").get("beta") as { id: number };
+    addVocab(db2, alice.id, widBeta.id, sentenceId);
+  }
+
+  beforeEach(() => {
+    resetSessionStore();
+    seedSentences();
+  });
+
+  it("createSession：mode 默认 practice，传 review 时记录 mode", () => {
+    const alice = db2.prepare("SELECT id FROM users WHERE username = ?").get("alice") as { id: number };
+    const s = createSession(db2, alice.id, 1);
+    expect(getSession(alice.id)!.mode).toBe("practice");
+    resetSessionStore();
+    const r = createSession(db2, alice.id, 1, { mode: "review" });
+    expect(getSession(alice.id)!.mode).toBe("review");
+    expect(r.mode).toBe("review");
+    resetSessionStore();
+  });
+
+  it("复习模式 start：wordIdx 指向第一个生词（跳过前面非生词）", async () => {
+    addBetaToVocab(s2);
+    const res = await agent2.post("/api/practice/start").send({ targetCount: 1, mode: "review" });
+    expect(res.status).toBe(200);
+    expect(res.body.current.sentenceId).toBe(s2);
+    expect(res.body.current.wordIdx).toBe(1); // beta（跳过 alpha）
+  });
+
+  it("复习模式连续输入：生词完成自动跳下一个生词，尾部非生词跳过 → sentenceDone", async () => {
+    addBetaToVocab(s2);
+    await agent2.post("/api/practice/start").send({ targetCount: 1, mode: "review" });
+    let last: any;
+    for (const ch of ["b", "e", "t", "a"]) {
+      last = await agent2.post("/api/practice/check").send({ char: ch });
+      expect(last.body.correct).toBe(true);
+    }
+    // beta 完成后 gamma（非生词）被跳过 → 整句完成
+    expect(last.body.wordDone).toBe(true);
+    expect(last.body.sentenceDone).toBe(true);
+  });
+
+  it("复习模式 + 人名边界：wordIdx 不停留在人名上（跳过 alpha 与 Tom）", async () => {
+    addBetaToVocab(s3);
+    const res = await agent2.post("/api/practice/start").send({ targetCount: 1, mode: "review" });
+    expect(res.status).toBe(200);
+    expect(res.body.current.sentenceId).toBe(s3);
+    expect(res.body.current.wordIdx).toBe(2); // beta（跳过 alpha 与 Tom）
+  });
+
+  it("练习模式：不跳过非生词，wordIdx 从 0 开始", async () => {
+    const res = await agent2.post("/api/practice/start").send({ targetCount: 1, mode: "practice" });
+    expect(res.status).toBe(200);
+    expect(res.body.current.wordIdx).toBe(0); // alpha 不跳过
+    expect(res.body.current.tokens[0].word).toBe("alpha");
   });
 });

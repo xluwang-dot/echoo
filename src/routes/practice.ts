@@ -33,6 +33,23 @@ function skipNameWords(state: { wordIdx: number; typed: string }, tokens: { is_n
   }
 }
 
+// 复习模式：跳过非生词与人名（in_vocab=false 或 is_name=1），指向下一个需默写的词
+// 注意：人名在复习模式同样不输入，一并跳过（不依赖与 skipNameWords 的调用顺序）
+function skipNonVocabWords(
+  state: { wordIdx: number; typed: string },
+  tokens: { in_vocab: boolean; is_name: number }[],
+  mode: string
+) {
+  if (mode !== "review") return;
+  while (
+    state.wordIdx < tokens.length &&
+    (!tokens[state.wordIdx].in_vocab || tokens[state.wordIdx].is_name === 1)
+  ) {
+    state.wordIdx += 1;
+    state.typed = "";
+  }
+}
+
 export function practiceRouter(db?: DatabaseSync): Router {
   const router = Router();
   const database = db ?? getDb();
@@ -49,10 +66,12 @@ export function practiceRouter(db?: DatabaseSync): Router {
       newRatio: mode === "practice" ? 10 : 0,
       reviewRatio: mode === "review" ? 10 : 0,
       reviewOnly: mode === "review",
+      mode,
     });
     skipNameWords(state, []); // start 后 skipNameWords 需要 tokens，后面 currentTokens 里处理
     const cur = currentTokens(database, state, req.session.userId!);
     skipNameWords(state, cur.sentence.tokens);
+    skipNonVocabWords(state, cur.sentence.tokens, state.mode); // 复习模式跳过非生词
     res.json({
       total: state.targetCount,
       current: {
@@ -98,6 +117,8 @@ export function practiceRouter(db?: DatabaseSync): Router {
     if (st.done) {
       state.wordIdx += 1;
       state.typed = "";
+      skipNameWords(state, sentence.tokens);
+      skipNonVocabWords(state, sentence.tokens, state.mode); // 复习模式跳过非生词
       const sentenceIsDone = state.wordIdx >= sentence.tokens.length;
       res.json({ correct: true, wordDone: true, sentenceDone: sentenceIsDone });
     } else {
