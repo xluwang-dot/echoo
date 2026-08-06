@@ -22,9 +22,9 @@ export const EXPECTED_COLUMNS: Record<string, string[]> = {
   sentence_words: ["sentence_id", "word_id", "position", "is_bold"],
   audio: ["id", "sentence_id", "file_path", "duration_ms", "word_offsets"],
   users: ["id", "username", "password_hash", "nickname", "preferences"],
-  user_vocab: ["user_id", "word_id", "sentence_id", "created_at"],
+  user_vocab: ["user_id", "word_id", "sentence_id", "created_at", "interval", "review_count", "next_review", "status"],
   word_status: ["user_id", "word_id", "status", "updated_at"],
-  practice_sessions: ["id", "user_id", "target_count", "start_time", "end_time", "done_count", "total_ms"],
+  practice_sessions: ["id", "user_id", "target_count", "start_time", "end_time", "done_count", "total_ms", "mode"],
   test_records: ["id", "session_id", "user_id", "word_id", "sentence_id", "time", "result"],
   sentence_reports: ["id", "sentence_id", "user_id", "time", "status"],
 };
@@ -81,6 +81,10 @@ CREATE TABLE IF NOT EXISTS user_vocab (
   word_id INTEGER NOT NULL,
   sentence_id INTEGER NOT NULL,
   created_at TEXT,
+  interval INTEGER DEFAULT 1,
+  review_count INTEGER DEFAULT 0,
+  next_review TEXT,
+  status TEXT DEFAULT 'learning',
   PRIMARY KEY (user_id, word_id, sentence_id),
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE,
@@ -105,6 +109,7 @@ CREATE TABLE IF NOT EXISTS practice_sessions (
   end_time TEXT,
   done_count INTEGER,
   total_ms INTEGER,
+  mode TEXT DEFAULT 'practice',
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 

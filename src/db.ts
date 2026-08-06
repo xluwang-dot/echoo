@@ -16,11 +16,24 @@ export function getDb(): DatabaseSync {
 }
 
 // 建库（幂等）：目录 + 建表 + 外键开启
-// T020 迁移：旧库 sentence_reports 无 description 列时自动补列
+// 轻量迁移：旧库缺失列时自动 ALTER 补列（幂等）
+//   T020：sentence_reports.description
+//   T026：user_vocab.interval/review_count/next_review/status；practice_sessions.mode
+const MIGRATIONS: [string, string, string][] = [
+  ["sentence_reports", "description", "TEXT"],
+  ["user_vocab", "interval", "INTEGER DEFAULT 1"],
+  ["user_vocab", "review_count", "INTEGER DEFAULT 0"],
+  ["user_vocab", "next_review", "TEXT"],
+  ["user_vocab", "status", "TEXT DEFAULT 'learning'"],
+  ["practice_sessions", "mode", "TEXT DEFAULT 'practice'"],
+];
+
 function migrate(db: DatabaseSync): void {
-  const cols = db.prepare("PRAGMA table_info(sentence_reports)").all() as { name: string }[];
-  if (!cols.some((c) => c.name === "description")) {
-    db.exec("ALTER TABLE sentence_reports ADD COLUMN description TEXT");
+  for (const [table, col, ddl] of MIGRATIONS) {
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+    if (!cols.some((c) => c.name === col)) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}`);
+    }
   }
 }
 

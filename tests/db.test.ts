@@ -97,4 +97,43 @@ describe("T005 schema", () => {
     ).map((r) => r.name);
     expect(again).toContain("description");
   });
+
+  it("迁移：旧版 user_vocab / practice_sessions 补记忆字段与 mode（T026）", () => {
+    // 模拟 T025 之前的旧库：user_vocab 无记忆字段、practice_sessions 无 mode
+    const db = openDb();
+    db.exec(`CREATE TABLE user_vocab (
+      user_id INTEGER NOT NULL,
+      word_id INTEGER NOT NULL,
+      sentence_id INTEGER NOT NULL,
+      created_at TEXT,
+      PRIMARY KEY (user_id, word_id, sentence_id)
+    )`);
+    db.exec(`CREATE TABLE practice_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      target_count INTEGER,
+      start_time TEXT,
+      end_time TEXT,
+      done_count INTEGER,
+      total_ms INTEGER
+    )`);
+    db.close();
+    resetDb(TEST_DB);
+    const vc = (
+      new DatabaseSync(TEST_DB).prepare("PRAGMA table_info(user_vocab)").all() as { name: string }[]
+    ).map((r) => r.name);
+    for (const c of ["interval", "review_count", "next_review", "status"]) {
+      expect(vc, `user_vocab.${c}`).toContain(c);
+    }
+    const ps = (
+      new DatabaseSync(TEST_DB).prepare("PRAGMA table_info(practice_sessions)").all() as { name: string }[]
+    ).map((r) => r.name);
+    expect(ps).toContain("mode");
+    // 幂等
+    resetDb(TEST_DB);
+    const vc2 = (
+      new DatabaseSync(TEST_DB).prepare("PRAGMA table_info(user_vocab)").all() as { name: string }[]
+    ).map((r) => r.name);
+    expect(vc2).toContain("interval");
+  });
 });
