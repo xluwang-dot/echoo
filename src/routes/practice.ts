@@ -211,6 +211,7 @@ export function practiceRouter(db?: DatabaseSync): Router {
   });
 
   // 报告句子有误（§3.6）：写入待处理队列（sentence_reports，status=pending）
+  // T020：支持可选错误描述 description（trim 后入库，缺省/空串为 NULL）
   router.post("/report", requireAuth, (req, res) => {
     const sentenceId = Number(req.body?.sentenceId);
     if (!Number.isInteger(sentenceId) || sentenceId <= 0) {
@@ -222,9 +223,12 @@ export function practiceRouter(db?: DatabaseSync): Router {
       res.status(404).json({ error: "句子不存在" });
       return;
     }
+    const desc = typeof req.body?.description === "string" ? req.body.description.trim() : null;
     const result = database
-      .prepare("INSERT INTO sentence_reports (sentence_id, user_id, time, status) VALUES (?, ?, ?, 'pending')")
-      .run(sentenceId, req.session.userId!, new Date().toISOString());
+      .prepare(
+        "INSERT INTO sentence_reports (sentence_id, user_id, time, status, description) VALUES (?, ?, ?, 'pending', ?)"
+      )
+      .run(sentenceId, req.session.userId!, new Date().toISOString(), desc);
     res.json({ ok: true, reportId: result.lastInsertRowid });
   });
 

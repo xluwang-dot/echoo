@@ -111,7 +111,7 @@ cd tts_service && python3 -m unittest test_gen_audio   # TTS 测试（8 用例�
 | POST | `/api/practice/hint` | 提示当前词（词+句入生词本） |
 | POST | `/api/practice/complete` | 完成当前句（body: `wordResults`） |
 | POST | `/api/practice/finish` | 结束练习 |
-| POST | `/api/practice/report` | 报告句子有误（body: `{sentenceId}`，入待处理队列） |
+| POST | `/api/practice/report` | 报告句子有误（body: `{sentenceId, description?}`，description 为可选错误描述，入待处理队列） |
 | GET | `/api/audio/:sentenceId` | 整句朗读 WAV（无需登录） |
 
 除 `/api/audio/*` 外均需登录（session Cookie）。

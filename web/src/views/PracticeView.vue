@@ -20,6 +20,8 @@ const flashError = ref(false); // 错误红闪
 const error = ref("");
 const reportInfo = ref(""); // 报告句子成功的短暂反馈
 let reportTimer: number | null = null;
+const reportOpen = ref(false); // 报告描述输入框
+const reportDesc = ref(""); // 报告描述内容
 const busy = ref(false);
 
 // 计时
@@ -213,12 +215,23 @@ async function onHint() {
   }
 }
 
-// 报告句子有误（§3.6）：上报当前句，短暂反馈
-async function onReport() {
+// 报告句子有误（§3.6/T020）：弹出描述输入框，可输入具体问题、可留空直接提交
+function openReport() {
   if (phase.value !== "running" || busy.value) return;
+  reportDesc.value = "";
+  reportOpen.value = true;
+}
+
+function cancelReport() {
+  reportOpen.value = false;
+}
+
+async function submitReport() {
+  if (busy.value) return;
   busy.value = true;
   try {
-    await api.report(sentence.value!.sentenceId);
+    await api.report(sentence.value!.sentenceId, reportDesc.value.trim() || undefined);
+    reportOpen.value = false;
     reportInfo.value = "已上报，感谢反馈 🙏";
     if (reportTimer) clearTimeout(reportTimer);
     reportTimer = window.setTimeout(() => (reportInfo.value = ""), 3000);
@@ -431,8 +444,24 @@ onUnmounted(() => {
           <div class="actions">
             <button :disabled="busy" @click="playSentence">朗读</button>
             <button :disabled="busy" @click="onHint">提示</button>
-            <button :disabled="busy" @click="onReport">报告句子有误</button>
+            <button :disabled="busy" @click="openReport">报告句子有误</button>
             <button class="danger" @click="onFinish">结束</button>
+          </div>
+          <!-- 报告描述输入框（T020） -->
+          <div v-if="reportOpen" class="modal-mask" @click.self="cancelReport">
+            <div class="modal">
+              <h3>报告句子有误</h3>
+              <p class="modal-tip">描述你遇到的问题（可选）</p>
+              <textarea
+                v-model="reportDesc"
+                rows="3"
+                placeholder="如：这段语音播放了两个句子…"
+              ></textarea>
+              <div class="modal-actions">
+                <button @click="cancelReport">取消</button>
+                <button class="primary" :disabled="busy" @click="submitReport">提交报告</button>
+              </div>
+            </div>
           </div>
           <p v-if="reportInfo" class="info">{{ reportInfo }}</p>
           <p v-if="error" class="error">{{ error }}</p>
@@ -654,6 +683,47 @@ onUnmounted(() => {
   color: #2a7d32;
   margin-top: 10px;
   text-align: center;
+}
+
+/* 报告描述输入框（T020） */
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+.modal {
+  background: #fff;
+  border-radius: 12px;
+  padding: 20px 24px;
+  width: min(420px, 90vw);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
+}
+.modal h3 {
+  margin: 0 0 6px;
+}
+.modal-tip {
+  margin: 0 0 10px;
+  color: #888;
+  font-size: 13px;
+}
+.modal textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  resize: vertical;
+}
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 14px;
 }
 .done {
   margin: auto;

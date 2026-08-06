@@ -234,6 +234,26 @@ describe("T010 practice HTTP API", () => {
     const r3 = await agent.post("/api/practice/report").send({});
     expect(r3.status).toBe(400);
   });
+
+  it("report 带错误描述：description trim 后随报告落库（T020）", async () => {
+    const res = await agent
+      .post("/api/practice/report")
+      .send({ sentenceId: sid1, description: "  一段语音播放了两个句子  " });
+    expect(res.status).toBe(200);
+    const row = db
+      .prepare("SELECT description FROM sentence_reports WHERE id = ?")
+      .get(res.body.reportId) as { description: string | null };
+    expect(row.description).toBe("一段语音播放了两个句子");
+  });
+
+  it("report 不带描述：description 为 NULL（T020）", async () => {
+    const res = await agent.post("/api/practice/report").send({ sentenceId: sid1 });
+    expect(res.status).toBe(200);
+    const row = db
+      .prepare("SELECT description FROM sentence_reports WHERE id = ?")
+      .get(res.body.reportId) as { description: string | null };
+    expect(row.description).toBeNull();
+  });
 });
 
 describe("T014 复习模式：跳过非生词（T016 收尾）", () => {

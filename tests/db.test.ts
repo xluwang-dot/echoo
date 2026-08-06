@@ -4,6 +4,7 @@ import path from "path";
 import os from "os";
 import { DatabaseSync } from "node:sqlite";
 import { SCHEMA_SQL, TABLES, EXPECTED_COLUMNS } from "../src/db/schema.js";
+import { resetDb } from "../src/db.js";
 
 const TEST_DB = path.join(os.tmpdir(), "word_typer_test_t005.db");
 
@@ -70,5 +71,30 @@ describe("T005 schema", () => {
     const row = db.prepare("PRAGMA foreign_keys").get() as { foreign_keys: number };
     expect(row.foreign_keys).toBe(1);
     db.close();
+  });
+
+  it("迁移：旧版 sentence_reports 无 description 列 → initDb 自动补列（T020）", () => {
+    // 模拟 T017 时代的旧库：sentence_reports 无 description 列
+    const db = openDb();
+    db.exec(`CREATE TABLE sentence_reports (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sentence_id INTEGER NOT NULL,
+      user_id INTEGER,
+      time TEXT,
+      status TEXT
+    )`);
+    db.close();
+    // initDb（经 resetDb 重建句柄）触发迁移
+    resetDb(TEST_DB);
+    const cols = (
+      new DatabaseSync(TEST_DB).prepare("PRAGMA table_info(sentence_reports)").all() as { name: string }[]
+    ).map((r) => r.name);
+    expect(cols).toContain("description");
+    // 幂等：再次 initDb 不报错且列仍在
+    resetDb(TEST_DB);
+    const again = (
+      new DatabaseSync(TEST_DB).prepare("PRAGMA table_info(sentence_reports)").all() as { name: string }[]
+    ).map((r) => r.name);
+    expect(again).toContain("description");
   });
 });

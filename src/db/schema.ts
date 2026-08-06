@@ -128,6 +128,7 @@ CREATE TABLE IF NOT EXISTS sentence_reports (
   user_id INTEGER,
   time TEXT,
   status TEXT,
+  description TEXT,
   FOREIGN KEY (sentence_id) REFERENCES sentences(id) ON DELETE CASCADE,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );

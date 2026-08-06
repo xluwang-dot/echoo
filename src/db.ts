@@ -16,6 +16,14 @@ export function getDb(): DatabaseSync {
 }
 
 // 建库（幂等）：目录 + 建表 + 外键开启
+// T020 迁移：旧库 sentence_reports 无 description 列时自动补列
+function migrate(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(sentence_reports)").all() as { name: string }[];
+  if (!cols.some((c) => c.name === "description")) {
+    db.exec("ALTER TABLE sentence_reports ADD COLUMN description TEXT");
+  }
+}
+
 export function initDb(databasePath: string = DB_PATH): DatabaseSync {
   fs.mkdirSync(path.dirname(databasePath), { recursive: true });
   if (db && dbPath === databasePath) return db;
@@ -24,6 +32,7 @@ export function initDb(databasePath: string = DB_PATH): DatabaseSync {
   dbPath = databasePath;
   db.exec("PRAGMA foreign_keys=ON");
   db.exec(SCHEMA_SQL);
+  migrate(db);
   return db;
 }
 
