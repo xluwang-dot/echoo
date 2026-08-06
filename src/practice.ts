@@ -2,7 +2,7 @@
 // 数据层 + 业务逻辑（无 HTTP）；判定纯函数在 checker.ts。
 import type { DatabaseSync } from "node:sqlite";
 
-export type WordResult = "mastered" | "hint";
+export type WordResult = "mastered" | "hint" | "test_fail";
 
 export interface SentenceWithTokens {
   id: number;
@@ -90,6 +90,60 @@ export function getDueReviewSentenceIds(db: DatabaseSync, userId: number): numbe
     )
     .all(userId, todayStr()) as { sentence_id: number }[];
   return rows.map((r) => r.sentence_id);
+}
+
+// ---------- 测试模式（T028，需求 §3.3 测试模式）----------
+export type TestScope = "all" | "near" | "fail" | "mastered";
+
+interface VocabPair {
+  word_id: number;
+  sentence_id: number;
+  review_count: number;
+  fail_count: number;
+  status: string;
+}
+
+// 测试内容池抽取：按 scope 过滤，层内随机、层间优先级（near → fail → mastered(≤20%) → 其余 learning）
+export function drawTestSentenceIds(
+  db: DatabaseSync,
+  userId: number,
+  targetCount: number,
+  scope: TestScope = "all"
+): number[] {
+  const pairs = db
+    .prepare("SELECT word_id, sentence_id, review_count, fail_count, status FROM user_vocab WHERE user_id=?")
+    .all(userId) as unknown as VocabPair[];
+  if (scope === "all") {
+    const near = pairs.filter((p) => p.status === "learning" && p.review_count >= MASTERY_THRESHOLD - 2);
+    const fail = pairs.filter((p) => p.fail_count >= 2);
+    const mastered = pairs.filter((p) => p.status === "mastered");
+    const rest = pairs.filter((p) => !near.includes(p) && !fail.includes(p) && !mastered.includes(p));
+    // 层内按句子去重，层间优先级填充
+    const result: number[] = [];
+    const seen = new Set<number>();
+    const push = (ps: VocabPair[]) => {
+      for (const p of ps) {
+        if (seen.has(p.sentence_id)) continue;
+        seen.add(p.sentence_id);
+        result.push(p.sentence_id);
+        if (result.length >= targetCount) return;
+      }
+    };
+    push(sample(near, near.length));
+    if (result.length < targetCount) push(sample(fail, fail.length));
+    if (result.length < targetCount) push(sample(mastered, Math.min(mastered.length, Math.ceil(targetCount * 0.2))));
+    if (result.length < targetCount) push(sample(rest, rest.length));
+    return result.slice(0, targetCount);
+  }
+  // 指定 scope：过滤后去重句子随机抽
+  const filtered = pairs.filter((p) => {
+    if (scope === "near") return p.status === "learning" && p.review_count >= MASTERY_THRESHOLD - 2;
+    if (scope === "fail") return p.fail_count >= 2;
+    if (scope === "mastered") return p.status === "mastered";
+    return true;
+  });
+  const sids = [...new Set(filtered.map((p) => p.sentence_id))];
+  return sample(sids, targetCount);
 }
 
 export interface DrawConfig {
@@ -186,10 +240,10 @@ export function drawSession(
 
 // ---------- 会话（需求 §3.5）----------
 
-export function startSession(db: DatabaseSync, userId: number, targetCount: number): number {
+export function startSession(db: DatabaseSync, userId: number, targetCount: number, mode = "practice"): number {
   const result = db
-    .prepare("INSERT INTO practice_sessions (user_id, target_count, start_time) VALUES (?, ?, ?)")
-    .run(userId, targetCount, new Date().toISOString());
+    .prepare("INSERT INTO practice_sessions (user_id, target_count, start_time, mode) VALUES (?, ?, ?, ?)")
+    .run(userId, targetCount, new Date().toISOString(), mode);
   return result.lastInsertRowid as number;
 }
 
@@ -227,6 +281,11 @@ export function recordWord(
       `INSERT INTO word_status (user_id, word_id, status, updated_at) VALUES (?, ?, 'mastered', ?)
        ON CONFLICT(user_id, word_id) DO UPDATE SET status='mastered', updated_at=excluded.updated_at`
     ).run(userId, wordId, now);
+  } else if (result === "test_fail") {
+    // 测试失败：降级（§3.2.5）——回 learning、间隔重置、错误频次 +1
+    db.prepare(
+      "UPDATE user_vocab SET status='learning', interval=1, review_count=0, fail_count=fail_count+1 WHERE user_id=? AND word_id=? AND sentence_id=?"
+    ).run(userId, wordId, sentenceId);
   } else {
     // hint：入本（如不在）+ 重置间隔（失败语义，§3.2.3）
     db.prepare(

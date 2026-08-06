@@ -78,8 +78,8 @@ export const api = {
   logout: () => req<{ ok: boolean }>("POST", "/api/auth/logout", {}),
   me: () => req<{ id: number; username: string; nickname: string }>("GET", "/api/auth/me"),
 
-  start: (targetCount: number, mode?: "practice" | "review") =>
-    req<StartResult>("POST", "/api/practice/start", { targetCount, mode }),
+  start: (targetCount: number, mode?: "practice" | "review" | "test", scope?: string) =>
+    req<StartResult>("POST", "/api/practice/start", { targetCount, mode, scope }),
   check: (char: string) => req<CheckResult>("POST", "/api/practice/check", { char }),
   hint: () => req<{ word: string; sentenceDone: boolean }>("POST", "/api/practice/hint", {}),
   backspace: () => req<{ typed: string }>("POST", "/api/practice/backspace", {}),

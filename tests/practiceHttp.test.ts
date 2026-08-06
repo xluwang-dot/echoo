@@ -365,3 +365,72 @@ describe("T014 复习模式：跳过非生词（T016 收尾）", () => {
     expect(res.body.current.tokens[0].word).toBe("alpha");
   });
 });
+
+describe("T028 测试模式 HTTP（禁提示 + 判定）", () => {
+  const TEST_DB3 = path.join(os.tmpdir(), "word_typer_test_t028.db");
+  let db3: DatabaseSync;
+  let app3: express.Express;
+  let agent3: request.Agent;
+  let tSid: number;
+  let tWidFoo: number;
+  let tWidBar: number;
+
+  beforeAll(async () => {
+    db3 = freshDb();
+    db3.prepare("INSERT INTO users (username, password_hash) VALUES (?, ?)").run("carol", hashPassword("c123456"));
+    // 句子 "foo bar." + 词句对：foo 临近掌握、bar 高错
+    tSid = db3.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("foo bar.", "foo 和 bar。").lastInsertRowid as number;
+    tWidFoo = db3.prepare("INSERT INTO words (word) VALUES (?)").run("foo").lastInsertRowid as number;
+    tWidBar = db3.prepare("INSERT INTO words (word) VALUES (?)").run("bar").lastInsertRowid as number;
+    db3.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(tSid, tWidFoo, 0, 0);
+    db3.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(tSid, tWidBar, 1, 0);
+    const uid = db3.prepare("SELECT id FROM users WHERE username='carol'").get() as { id: number };
+    db3.prepare("INSERT INTO user_vocab (user_id, word_id, sentence_id, created_at, interval, review_count, next_review, status, fail_count) VALUES (?,?,?,?,16,3,?, 'learning', 0)").run(uid.id, tWidFoo, tSid, "2026-08-06", "2026-08-07");
+    db3.prepare("INSERT INTO user_vocab (user_id, word_id, sentence_id, created_at, interval, review_count, next_review, status, fail_count) VALUES (?,?,?,?,1,0,?, 'learning', 2)").run(uid.id, tWidBar, tSid, "2026-08-06", "2026-08-07");
+
+    app3 = express();
+    app3.use(express.json());
+    app3.use(configureSession());
+    app3.use("/api/auth", authRouter(db3));
+    app3.use("/api/practice", practiceRouter(db3));
+    agent3 = request.agent(app3);
+    const r = await agent3.post("/api/auth/login").send({ username: "carol", password: "c123456" });
+    expect(r.status).toBe(200);
+  });
+  afterAll(() => {
+    db3.close();
+    if (fs.existsSync(TEST_DB3)) fs.unlinkSync(TEST_DB3);
+  });
+  beforeEach(() => {
+    resetSessionStore();
+  });
+
+  it("start mode=test：从测试内容池抽句", async () => {
+    const res = await agent3.post("/api/practice/start").send({ targetCount: 1, mode: "test" });
+    expect(res.status).toBe(200);
+    expect(res.body.current.sentenceId).toBe(tSid);
+  });
+
+  it("测试模式 hint → 403", async () => {
+    await agent3.post("/api/practice/start").send({ targetCount: 1, mode: "test" });
+    const h = await agent3.post("/api/practice/hint").send({});
+    expect(h.status).toBe(403);
+  });
+
+  it("测试模式 complete：mastered 推进、test_fail 降级（fail_count+1）", async () => {
+    await agent3.post("/api/practice/start").send({ targetCount: 1, mode: "test" });
+    await agent3.post("/api/practice/complete").send({
+      wordResults: [
+        { wordId: tWidFoo, result: "mastered" }, // 推进：3→4
+        { wordId: tWidBar, result: "test_fail" }, // 降级
+      ],
+    });
+    const uid = db3.prepare("SELECT id FROM users WHERE username='carol'").get() as { id: number };
+    const foo = db3.prepare("SELECT review_count FROM user_vocab WHERE user_id=? AND word_id=? AND sentence_id=?").get(uid.id, tWidFoo, tSid) as { review_count: number };
+    const bar = db3.prepare("SELECT status, review_count, fail_count FROM user_vocab WHERE user_id=? AND word_id=? AND sentence_id=?").get(uid.id, tWidBar, tSid) as { status: string; review_count: number; fail_count: number };
+    expect(foo.review_count).toBe(4);
+    expect(bar.status).toBe("learning");
+    expect(bar.review_count).toBe(0);
+    expect(bar.fail_count).toBe(3);
+  });
+});

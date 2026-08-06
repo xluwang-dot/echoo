@@ -8,7 +8,11 @@ const router = useRouter();
 // 阶段：menu（三区首页）→ running（拼写）→ done（完成）→ menu
 const phase = ref<"menu" | "running" | "done">("menu");
 const targetCount = ref(10);
-const practiceMode = ref<"practice" | "review">("practice");
+const practiceMode = ref<"practice" | "review" | "test">("practice");
+const testScope = ref<"all" | "near" | "fail" | "mastered">("all"); // 测试范围（T028）
+const scopeOpen = ref(false); // 测试范围选择弹窗
+const failSet = ref<Set<number>>(new Set()); // 测试模式：本句标「不会」的词
+const testStats = ref<{ total: number; pass: number; fails: string[] }>({ total: 0, pass: 0, fails: [] }); // 测试会话统计
 const total = ref(0);
 const sentence = ref<Sentence | null>(null);
 
@@ -245,19 +249,33 @@ async function submitReport() {
 // 整句完成：提交全词结果，推进下一句或结束
 async function finishSentence() {
   const tokens = sentence.value!.tokens;
+  const isTest = practiceMode.value === "test";
   const wordResults = tokens
     .map((t, i) => ({ t, i }))
-    .filter(({ t }) => t.is_name !== 1)
-    .map(({ t, i }) => ({
-      wordId: t.word_id,
-      result: hintSet.value.has(i) ? "hint" : "mastered",
-    }));
+    .filter(({ t }) => t.is_name !== 1 && (isTest ? t.in_vocab : true))
+    .map(({ t, i }) =>
+      isTest
+        ? { wordId: t.word_id, result: failSet.value.has(i) ? ("test_fail" as const) : ("mastered" as const) }
+        : { wordId: t.word_id, result: hintSet.value.has(i) ? ("hint" as const) : ("mastered" as const) }
+    );
+  // 测试模式：累计统计（结果页用）
+  if (isTest) {
+    for (const w of wordResults) {
+      testStats.value.total += 1;
+      if (w.result === "mastered") {
+        testStats.value.pass += 1;
+      } else {
+        const tok = tokens.find((t) => t.word_id === w.wordId);
+        if (tok) testStats.value.fails.push(tok.word);
+      }
+    }
+  }
   const ms = Date.now() - startMs.value;
   const r = await api.complete(wordResults);
   todayList.value.push({ en: sentence.value!.en, ms });
 
-  // 连击：本句无提示 → +1，有提示 → 归零
-  const hadHint = wordResults.some((w) => w.result === "hint");
+  // 连击：本句无提示/无失败 → +1，有 → 归零
+  const hadHint = wordResults.some((w) => w.result === "hint" || w.result === "test_fail");
   streak.value = hadHint ? 0 : streak.value + 1;
 
   // 奖励特效：纸屑 + 里程碑庆祝
@@ -286,19 +304,22 @@ async function finishSentence() {
 }
 
 // ---------- 开始/结束 ----------
-async function onStart(mode: "practice" | "review" = "practice") {
+async function onStart(mode: "practice" | "review" | "test" = "practice", scope?: "all" | "near" | "fail" | "mastered") {
   error.value = "";
   busy.value = true;
   practiceMode.value = mode;
+  if (mode === "test") testScope.value = scope ?? "all";
   slideState.value = "idle"; // 重置滑动状态，避免上一轮 slide-exit 残留
   try {
-    const r = await api.start(targetCount.value, mode);
+    const r = await api.start(targetCount.value, mode, mode === "test" ? testScope.value : undefined);
     total.value = r.total;
     sentence.value = r.current;
     wordIdx.value = r.current.wordIdx;
     typed.value = "";
     hintSet.value = new Set();
-    skipNonVocabWords(); // 复习模式：跳到第一个生词
+    failSet.value = new Set();
+    if (mode === "test") testStats.value = { total: 0, pass: 0, fails: [] }; // 测试会话统计重置
+    skipNonVocabWords(); // 复习/测试模式：跳到第一个生词
     todayList.value = [];
     finishDone.value = false;
     phase.value = "running";
@@ -314,6 +335,30 @@ async function onStart(mode: "practice" | "review" = "practice") {
     error.value = (e as Error).message;
   } finally {
     busy.value = false;
+  }
+}
+
+// 测试模式：弹范围选择后开始
+function openTestScope() {
+  scopeOpen.value = true;
+}
+function startTest(scope: "all" | "near" | "fail" | "mastered") {
+  scopeOpen.value = false;
+  onStart("test", scope);
+}
+
+// 测试模式「不会」：标记当前词 test_fail，跳到下一词（无提示，§3.3）
+function onGiveUp() {
+  if (phase.value !== "running" || busy.value) return;
+  const t = sentence.value!.tokens[wordIdx.value];
+  if (!t || t.is_name === 1) return;
+  if (failSet.value.has(wordIdx.value)) return;
+  failSet.value.add(wordIdx.value);
+  wordIdx.value += 1;
+  typed.value = "";
+  skipNonVocabWords(); // 跳到下一个需测试的词
+  if (wordIdx.value >= sentence.value!.tokens.length) {
+    finishSentence();
   }
 }
 
@@ -420,10 +465,29 @@ onUnmounted(() => {
             <h2>复习</h2>
             <p>只复习生词本中的句子</p>
           </div>
+          <div class="menu-card" @click="openTestScope">
+            <div class="card-icon">📋</div>
+            <h2>测试</h2>
+            <p>验收生词掌握度（禁提示）</p>
+          </div>
           <div class="menu-card" @click="router.push('/vocab')">
             <div class="card-icon">📖</div>
             <h2>生词本</h2>
             <p>查看生词本中的句子</p>
+          </div>
+        </div>
+        <!-- 测试范围选择（T028） -->
+        <div v-if="scopeOpen" class="modal-mask" @click.self="scopeOpen = false">
+          <div class="modal">
+            <h3>测试范围</h3>
+            <p class="modal-tip">选择本次测试的验收对象（可留空直接提交）</p>
+            <div class="modal-actions wrap">
+              <button class="primary" @click="startTest('all')">全部生词</button>
+              <button @click="startTest('near')">临近掌握</button>
+              <button @click="startTest('fail')">高错词</button>
+              <button @click="startTest('mastered')">已掌握复测</button>
+              <button @click="scopeOpen = false">取消</button>
+            </div>
           </div>
         </div>
         <p v-if="error" class="error">{{ error }}</p>
@@ -446,7 +510,12 @@ onUnmounted(() => {
           </div>
           <div class="actions">
             <button :disabled="busy" @click="playSentence">朗读</button>
-            <button :disabled="busy" @click="onHint">提示</button>
+            <template v-if="practiceMode === 'test'">
+              <button :disabled="busy" @click="onGiveUp">不会</button>
+            </template>
+            <template v-else>
+              <button :disabled="busy" @click="onHint">提示</button>
+            </template>
             <button :disabled="busy" @click="openReport">报告句子有误</button>
             <button class="danger" @click="onFinish">结束</button>
           </div>
@@ -475,7 +544,17 @@ onUnmounted(() => {
       <!-- 完成 -->
       <div v-else class="done">
         <h2>练习完成</h2>
-        <div class="stats">
+        <div v-if="practiceMode === 'test'" class="stats">
+          <div class="stat">
+            <span class="num">{{ testStats.pass }}/{{ testStats.total }}</span>
+            <span class="label">拼对 / 测试词数（{{ testStats.total ? Math.round((testStats.pass / testStats.total) * 100) + "%" : "—" }}）</span>
+          </div>
+          <div class="stat">
+            <span class="num">{{ elapsedText }}</span>
+            <span class="label">总用时</span>
+          </div>
+        </div>
+        <div v-else class="stats">
           <div class="stat">
             <span class="num">{{ todayList.length }}</span>
             <span class="label">完成句子</span>
@@ -484,6 +563,13 @@ onUnmounted(() => {
             <span class="num">{{ elapsedText }}</span>
             <span class="label">总用时</span>
           </div>
+        </div>
+        <div v-if="practiceMode === 'test' && testStats.fails.length" class="fail-list">
+          <h3>本次错词（已自动进复习队列）</h3>
+          <p class="fail-words">{{ testStats.fails.join(" · ") }}</p>
+        </div>
+        <div v-if="practiceMode === 'test' && !testStats.fails.length" class="fail-list">
+          <h3>🎉 全部拼对，无错词</h3>
         </div>
         <div class="done-actions">
           <button @click="phase = 'menu'; sentence = null">返回首页</button>
@@ -727,6 +813,21 @@ onUnmounted(() => {
   gap: 10px;
   justify-content: flex-end;
   margin-top: 14px;
+}
+.modal-actions.wrap {
+  flex-wrap: wrap;
+}
+.fail-list {
+  margin-top: 16px;
+  text-align: center;
+}
+.fail-list h3 {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+.fail-words {
+  color: #c0392b;
+  margin: 0;
 }
 .done {
   margin: auto;

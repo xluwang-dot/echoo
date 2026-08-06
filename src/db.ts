@@ -25,6 +25,7 @@ const MIGRATIONS: [string, string, string][] = [
   ["user_vocab", "review_count", "INTEGER DEFAULT 0"],
   ["user_vocab", "next_review", "TEXT"],
   ["user_vocab", "status", "TEXT DEFAULT 'learning'"],
+  ["user_vocab", "fail_count", "INTEGER DEFAULT 0"],
   ["practice_sessions", "mode", "TEXT DEFAULT 'practice'"],
 ];
 

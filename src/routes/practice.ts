@@ -54,19 +54,23 @@ export function practiceRouter(db?: DatabaseSync): Router {
   const router = Router();
   const database = db ?? getDb();
 
-  // 开始练习（mode: "practice"=默认, "review"=纯复习生词本）
+  // 开始练习（mode: "practice"=默认学新, "review"=到期复习, "test"=验收测试）
   router.post("/start", requireAuth, (req, res) => {
     const targetCount = Number(req.body?.targetCount);
     if (!Number.isInteger(targetCount) || targetCount <= 0 || targetCount > MAX_TARGET) {
       res.status(400).json({ error: `targetCount 需为 1~${MAX_TARGET} 的整数` });
       return;
     }
-    const mode = req.body?.mode === "review" ? "review" : "practice";
+    const m = req.body?.mode;
+    const mode = m === "review" || m === "test" ? m : "practice";
+    // 测试范围（T028）
+    const scope = ["all", "near", "fail", "mastered"].includes(req.body?.scope) ? req.body.scope : "all";
     const state = createSession(database, req.session.userId!, targetCount, {
       newRatio: mode === "practice" ? 10 : 0,
       reviewRatio: mode === "review" ? 10 : 0,
       reviewOnly: mode === "review",
       mode,
+      scope,
     });
     skipNameWords(state, []); // start 后 skipNameWords 需要 tokens，后面 currentTokens 里处理
     const cur = currentTokens(database, state, req.session.userId!);
@@ -127,10 +131,15 @@ export function practiceRouter(db?: DatabaseSync): Router {
   });
 
   // 提示词：当前词入生词本 + 返回词；词浅色提示，仍要求用户再输入一次
+  // T028：测试模式禁用提示词（验收性质）
   router.post("/hint", requireAuth, (req, res) => {
     const state = getSession(req.session.userId!);
     if (!state) {
       res.status(409).json({ error: "没有进行中的练习" });
+      return;
+    }
+    if (state.mode === "test") {
+      res.status(403).json({ error: "测试模式禁用提示词" });
       return;
     }
     const { sentence } = currentTokens(database, state, req.session.userId!);

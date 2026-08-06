@@ -17,6 +17,7 @@ import {
   advanceInterval,
   MASTERY_THRESHOLD,
   getDueReviewSentenceIds,
+  drawTestSentenceIds,
 } from "../src/practice.js";
 import { addVocab } from "../src/vocab.js";
 
@@ -346,5 +347,65 @@ describe("T027 复习调度（SM-2 间隔推进 + 到期优先）", () => {
       const ids = drawSession(db, userA, 1, { reviewOnly: true });
       expect(ids[0]).toBe(sid1);
     }
+  });
+});
+
+describe("T028 测试模式（内容池 + 降级）", () => {
+  let sid2: number;
+  let sid3: number;
+  let widBaz: number;
+  let widQux: number;
+
+  beforeEach(() => {
+    db.exec(
+      "DELETE FROM test_records; DELETE FROM practice_sessions; DELETE FROM user_vocab; DELETE FROM word_status; DELETE FROM sentence_words; DELETE FROM sentences; DELETE FROM words;"
+    );
+    sid1 = db.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("foo bar.", "foo 和 bar。").lastInsertRowid as number;
+    sid2 = db.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("baz qux.", "baz 和 qux。").lastInsertRowid as number;
+    sid3 = db.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("quux corge.", "quux 和 corge。").lastInsertRowid as number;
+    widFoo = db.prepare("INSERT INTO words (word) VALUES (?)").run("foo").lastInsertRowid as number;
+    widBar = db.prepare("INSERT INTO words (word) VALUES (?)").run("bar").lastInsertRowid as number;
+    widBaz = db.prepare("INSERT INTO words (word) VALUES (?)").run("baz").lastInsertRowid as number;
+    widQux = db.prepare("INSERT INTO words (word) VALUES (?)").run("quux").lastInsertRowid as number;
+    db.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(sid1, widFoo, 0, 0);
+    db.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(sid2, widBaz, 0, 0);
+    db.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(sid3, widQux, 0, 0);
+  });
+
+  it("recordWord test_fail：已掌握词句对降级（回 learning、间隔重置、fail_count+1）", () => {
+    addVocab(db, userA, widFoo, sid1);
+    db.prepare("UPDATE user_vocab SET status='mastered', review_count=5, interval=35 WHERE user_id=? AND word_id=? AND sentence_id=?").run(userA, widFoo, sid1);
+    const sid = startSession(db, userA, 1);
+    recordWord(db, sid, userA, widFoo, sid1, "test_fail");
+    const v = db.prepare("SELECT status, interval, review_count, fail_count FROM user_vocab WHERE user_id=? AND word_id=? AND sentence_id=?").get(userA, widFoo, sid1) as { status: string; interval: number; review_count: number; fail_count: number };
+    expect(v.status).toBe("learning");
+    expect(v.interval).toBe(1);
+    expect(v.review_count).toBe(0);
+    expect(v.fail_count).toBe(1);
+  });
+
+  it("drawTestSentenceIds：临近掌握优先（target=1 抽 near 句）", () => {
+    // foo 临近掌握（review_count=3）、baz 高错（fail_count=2）、quux 普通 learning
+    addVocab(db, userA, widFoo, sid1);
+    addVocab(db, userA, widBaz, sid2);
+    addVocab(db, userA, widQux, sid3);
+    db.prepare("UPDATE user_vocab SET review_count=3, interval=16 WHERE user_id=? AND word_id=? AND sentence_id=?").run(userA, widFoo, sid1);
+    db.prepare("UPDATE user_vocab SET fail_count=2 WHERE user_id=? AND word_id=? AND sentence_id=?").run(userA, widBaz, sid2);
+    for (let i = 0; i < 5; i++) {
+      const ids = drawTestSentenceIds(db, userA, 1);
+      expect(ids[0]).toBe(sid1); // 临近掌握优先
+    }
+  });
+
+  it("drawTestSentenceIds：scope=fail 只抽高错句", () => {
+    addVocab(db, userA, widFoo, sid1);
+    addVocab(db, userA, widBaz, sid2);
+    addVocab(db, userA, widQux, sid3);
+    db.prepare("UPDATE user_vocab SET review_count=3, interval=16 WHERE user_id=? AND word_id=? AND sentence_id=?").run(userA, widFoo, sid1);
+    db.prepare("UPDATE user_vocab SET fail_count=2 WHERE user_id=? AND word_id=? AND sentence_id=?").run(userA, widBaz, sid2);
+    const ids = drawTestSentenceIds(db, userA, 3, "fail");
+    expect(ids).toContain(sid2);
+    expect(ids).not.toContain(sid1); // near 不在 fail 池
+    expect(ids).not.toContain(sid3);
   });
 });

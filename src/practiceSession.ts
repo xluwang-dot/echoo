@@ -1,7 +1,7 @@
 // 练习会话状态机（T010，内存存储）
 // 每个登录用户同时只有一个进行中的练习会话。
 import type { DatabaseSync } from "node:sqlite";
-import { drawSession, startSession, type DrawConfig } from "./practice.js";
+import { drawSession, drawTestSentenceIds, startSession, type DrawConfig, type TestScope } from "./practice.js";
 
 export interface SessionState {
   sessionId: number;
@@ -11,7 +11,8 @@ export interface SessionState {
   wordIdx: number; // 当前词下标
   typed: string; // 当前词已输入字符
   startedAt: number; // Date.now()
-  mode: "practice" | "review"; // 练习/复习模式
+  mode: "practice" | "review" | "test"; // 练习/复习/测试模式（T028）
+  scope?: TestScope; // 测试范围（T028）
 }
 
 const store = new Map<number, SessionState>();
@@ -28,11 +29,19 @@ export function clearSession(userId: number): void {
   store.delete(userId);
 }
 
-// 创建会话：抽取句子 + 建 practice_sessions
-export function createSession(db: DatabaseSync, userId: number, targetCount: number, config?: DrawConfig & { mode?: "practice" | "review" }): SessionState {
-  const { mode = "practice", ...drawConfig } = config ?? {};
-  const sentenceIds = drawSession(db, userId, targetCount, drawConfig);
-  const sessionId = startSession(db, userId, targetCount);
+// 创建会话：按模式抽取句子 + 建 practice_sessions（mode 落库）
+export function createSession(
+  db: DatabaseSync,
+  userId: number,
+  targetCount: number,
+  config?: DrawConfig & { mode?: "practice" | "review" | "test"; scope?: TestScope }
+): SessionState {
+  const { mode = "practice", scope = "all", ...drawConfig } = config ?? {};
+  const sentenceIds =
+    mode === "test"
+      ? drawTestSentenceIds(db, userId, targetCount, scope)
+      : drawSession(db, userId, targetCount, drawConfig);
+  const sessionId = startSession(db, userId, targetCount, mode);
   const state: SessionState = {
     sessionId,
     targetCount,
@@ -42,6 +51,7 @@ export function createSession(db: DatabaseSync, userId: number, targetCount: num
     typed: "",
     startedAt: Date.now(),
     mode,
+    scope,
   };
   store.set(userId, state);
   return state;
