@@ -37,6 +37,9 @@ let timerId: number | null = null;
 // 当日已测（本次会话内完成句子 + 用时）
 const todayList = ref<{ en: string; ms: number }[]>([]);
 const finishDone = ref(false);
+const dueBanner = ref(0); // 到期复习数量（T029）
+const forceReview = ref(false); // 偏好：登录后强制进入复习
+const bannerLoaded = ref(false);
 
 // 特效状态
 const slideState = ref<"idle" | "exit" | "enter">("idle");
@@ -432,7 +435,22 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 
-onMounted(() => window.addEventListener("keydown", onKeydown));
+onMounted(async () => {
+  window.addEventListener("keydown", onKeydown);
+  // T029：登录后强引导——拉取到期数量与偏好，强制偏好时自动进入复习
+  try {
+    const me = await api.me();
+    forceReview.value = me.preferences?.login_force_review === true;
+    const d = await api.dueCount();
+    dueBanner.value = d.due;
+    bannerLoaded.value = true;
+    if (forceReview.value && d.due > 0 && phase.value === "menu") {
+      onStart("review");
+    }
+  } catch {
+    // 未登录等：静默
+  }
+});
 onUnmounted(() => {
   window.removeEventListener("keydown", onKeydown);
   if (timerId) clearInterval(timerId);
@@ -454,6 +472,11 @@ onUnmounted(() => {
       <!-- 设置页 -->
       <!-- 三区首页 -->
       <div v-if="phase === 'menu'" class="menu">
+        <div v-if="bannerLoaded && dueBanner > 0" class="due-banner">
+          <span>📢 有 <strong>{{ dueBanner }}</strong> 个到期词待复习（按记忆曲线）</span>
+          <button class="primary" @click="onStart('review')">开始复习</button>
+          <button v-if="!forceReview" class="plain" @click="dueBanner = 0">跳过</button>
+        </div>
         <div class="menu-cards">
           <div class="menu-card" @click="onStart('practice')">
             <div class="card-icon">📝</div>
@@ -828,6 +851,29 @@ onUnmounted(() => {
 .fail-words {
   color: #c0392b;
   margin: 0;
+}
+
+/* T029 到期横幅 */
+.due-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: #fff7e6;
+  border: 1px solid #ffd591;
+  border-radius: 10px;
+  padding: 12px 16px;
+  margin-bottom: 18px;
+}
+.due-banner span {
+  flex: 1;
+}
+.due-banner strong {
+  color: #d46b08;
+  font-size: 18px;
+}
+.due-banner button.plain {
+  background: transparent;
+  border: 1px solid #ccc;
 }
 .done {
   margin: auto;

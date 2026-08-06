@@ -18,6 +18,7 @@ import {
   MASTERY_THRESHOLD,
   getDueReviewSentenceIds,
   drawTestSentenceIds,
+  getDueCount,
 } from "../src/practice.js";
 import { addVocab } from "../src/vocab.js";
 
@@ -407,5 +408,36 @@ describe("T028 测试模式（内容池 + 降级）", () => {
     expect(ids).toContain(sid2);
     expect(ids).not.toContain(sid1); // near 不在 fail 池
     expect(ids).not.toContain(sid3);
+  });
+});
+
+describe("T029 到期横幅数据（getDueCount）", () => {
+  beforeEach(() => {
+    db.exec(
+      "DELETE FROM test_records; DELETE FROM practice_sessions; DELETE FROM user_vocab; DELETE FROM word_status; DELETE FROM sentence_words; DELETE FROM sentences; DELETE FROM words;"
+    );
+    sid1 = db.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("foo bar baz.", "foo bar baz。").lastInsertRowid as number;
+    widFoo = db.prepare("INSERT INTO words (word) VALUES (?)").run("foo").lastInsertRowid as number;
+    widBar = db.prepare("INSERT INTO words (word) VALUES (?)").run("bar").lastInsertRowid as number;
+    const widBaz = db.prepare("INSERT INTO words (word) VALUES (?)").run("baz").lastInsertRowid as number;
+    db.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(sid1, widFoo, 0, 0);
+    db.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(sid1, widBar, 1, 0);
+    db.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(sid1, widBaz, 2, 0);
+    addVocab(db, userA, widFoo, sid1);
+    addVocab(db, userA, widBar, sid1);
+    addVocab(db, userA, widBaz, sid1);
+  });
+
+  it("getDueCount：learning 到期计数，未到期/mastered 不计", () => {
+    // foo 到期（昨天）、bar 未到期（明天）、baz mastered（过期也不计）
+    db.prepare("UPDATE user_vocab SET next_review=? WHERE user_id=? AND word_id=? AND sentence_id=?").run(daysAgo(1), userA, widFoo, sid1);
+    db.prepare("UPDATE user_vocab SET next_review=? WHERE user_id=? AND word_id=? AND sentence_id=?").run(daysAhead(1), userA, widBar, sid1);
+    const widBaz = db.prepare("SELECT id FROM words WHERE word='baz'").get() as { id: number };
+    db.prepare("UPDATE user_vocab SET status='mastered', next_review=? WHERE user_id=? AND word_id=? AND sentence_id=?").run(daysAgo(1), userA, widBaz.id, sid1);
+    expect(getDueCount(db, userA)).toBe(1); // 仅 foo 到期
+  });
+
+  it("getDueCount：next_review 为空（未调度）不计", () => {
+    expect(getDueCount(db, userA)).toBe(0);
   });
 });

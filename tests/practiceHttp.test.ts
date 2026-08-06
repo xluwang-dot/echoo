@@ -434,3 +434,55 @@ describe("T028 测试模式 HTTP（禁提示 + 判定）", () => {
     expect(bar.fail_count).toBe(3);
   });
 });
+
+describe("T029 到期横幅与偏好（due-count + preferences）", () => {
+  const TEST_DB4 = path.join(os.tmpdir(), "word_typer_test_t029.db");
+  let db4: DatabaseSync;
+  let app4: express.Express;
+  let agent4: request.Agent;
+
+  beforeAll(async () => {
+    db4 = freshDb();
+    db4.prepare("INSERT INTO users (username, password_hash) VALUES (?, ?)").run("dave", hashPassword("d123456"));
+    app4 = express();
+    app4.use(express.json());
+    app4.use(configureSession());
+    app4.use("/api/auth", authRouter(db4));
+    app4.use("/api/practice", practiceRouter(db4));
+    agent4 = request.agent(app4);
+    const r = await agent4.post("/api/auth/login").send({ username: "dave", password: "d123456" });
+    expect(r.status).toBe(200);
+  });
+  afterAll(() => {
+    db4.close();
+    if (fs.existsSync(TEST_DB4)) fs.unlinkSync(TEST_DB4);
+  });
+  beforeEach(() => {
+    resetSessionStore();
+  });
+
+  it("due-count：无生词本时为 0", async () => {
+    const res = await agent4.get("/api/practice/due-count");
+    expect(res.status).toBe(200);
+    expect(res.body.due).toBe(0);
+  });
+
+  it("due-count：有到期词句对时返回数量", async () => {
+    const uid = db4.prepare("SELECT id FROM users WHERE username='dave'").get() as { id: number };
+    const sid = db4.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("foo bar.", "foo bar。").lastInsertRowid as number;
+    const wid = db4.prepare("INSERT INTO words (word) VALUES (?)").run("foo").lastInsertRowid as number;
+    db4.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(sid, wid, 0, 0);
+    // 到期词句对（昨天到期）
+    db4.prepare("INSERT INTO user_vocab (user_id, word_id, sentence_id, created_at, interval, review_count, next_review, status, fail_count) VALUES (?,?,?,?,1,0,?,'learning',0)")
+      .run(uid.id, wid, sid, "2026-08-06", new Date(Date.now() - 86400000).toISOString().slice(0, 10));
+    const res = await agent4.get("/api/practice/due-count");
+    expect(res.body.due).toBe(1);
+  });
+
+  it("preferences：更新后 me 返回合并结果", async () => {
+    const r1 = await agent4.post("/api/auth/preferences").send({ login_force_review: true });
+    expect(r1.status).toBe(200);
+    const me = await agent4.get("/api/auth/me");
+    expect(me.body.preferences).toEqual({ login_force_review: true });
+  });
+});

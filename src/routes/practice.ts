@@ -4,7 +4,7 @@ import { Router, Request, Response, NextFunction } from "express";
 import type { DatabaseSync } from "node:sqlite";
 import { getDb } from "../db.js";
 import { requireAuth } from "./auth.js";
-import { getSentenceWithTokens, completeSentence } from "../practice.js";
+import { getSentenceWithTokens, completeSentence, getDueCount } from "../practice.js";
 import { wordState, sentenceDone } from "../checker.js";
 import { createSession, getSession, clearSession, elapsedMs } from "../practiceSession.js";
 import { finishSession as persistSession } from "../practice.js";
@@ -217,6 +217,11 @@ export function practiceRouter(db?: DatabaseSync): Router {
     persistSession(database, state.sessionId, state.idx, elapsedMs(state));
     clearSession(req.session.userId!);
     res.json({ ok: true, done: state.idx });
+  });
+
+  // 到期复习数量（T029，§4.1 登录到期横幅）
+  router.get("/due-count", requireAuth, (req, res) => {
+    res.json({ due: getDueCount(database, req.session.userId!) });
   });
 
   // 报告句子有误（§3.6）：写入待处理队列（sentence_reports，status=pending）

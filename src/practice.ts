@@ -92,6 +92,16 @@ export function getDueReviewSentenceIds(db: DatabaseSync, userId: number): numbe
   return rows.map((r) => r.sentence_id);
 }
 
+// 到期复习数量（§4.1 登录到期横幅）：learning 且 next_review ≤ 今日的词句对数
+export function getDueCount(db: DatabaseSync, userId: number): number {
+  const row = db
+    .prepare(
+      "SELECT COUNT(*) AS c FROM user_vocab WHERE user_id=? AND status='learning' AND next_review IS NOT NULL AND next_review <= ?"
+    )
+    .get(userId, todayStr()) as { c: number };
+  return row.c;
+}
+
 // ---------- 测试模式（T028，需求 §3.3 测试模式）----------
 export type TestScope = "all" | "near" | "fail" | "mastered";
 

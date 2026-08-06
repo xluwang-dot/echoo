@@ -76,7 +76,11 @@ export const api = {
   login: (username: string, password: string) =>
     req<{ id: number }>("POST", "/api/auth/login", { username, password }),
   logout: () => req<{ ok: boolean }>("POST", "/api/auth/logout", {}),
-  me: () => req<{ id: number; username: string; nickname: string }>("GET", "/api/auth/me"),
+  me: () => req<{ id: number; username: string; nickname: string; preferences: Record<string, unknown> }>("GET", "/api/auth/me"),
+  updatePreferences: (preferences: Record<string, unknown>) =>
+    req<{ id: number; username: string; nickname: string; preferences: Record<string, unknown> }>("POST", "/api/auth/preferences", preferences),
+
+  dueCount: () => req<{ due: number }>("GET", "/api/practice/due-count"),
 
   start: (targetCount: number, mode?: "practice" | "review" | "test", scope?: string) =>
     req<StartResult>("POST", "/api/practice/start", { targetCount, mode, scope }),

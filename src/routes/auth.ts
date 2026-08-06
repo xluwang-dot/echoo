@@ -1,7 +1,7 @@
 // 认证路由（T007）
 import { Router, Request, Response, NextFunction } from "express";
 import type { DatabaseSync } from "node:sqlite";
-import { createUser, findUserById, findUserByUsername, login, toPublicUser } from "../auth.js";
+import { createUser, findUserById, findUserByUsername, login, toPublicUser, updatePreferences } from "../auth.js";
 import { getDb } from "../db.js";
 
 export function requireAuth(req: Request, res: Response, next: NextFunction): void {
@@ -61,6 +61,18 @@ export function authRouter(db?: DatabaseSync): Router {
       res.status(401).json({ error: "用户不存在" });
       return;
     }
+    res.json(toPublicUser(user));
+  });
+
+  // 更新偏好（T029：整体替换 users.preferences JSON）
+  router.post("/preferences", requireAuth, (req, res) => {
+    const prefs = req.body ?? {};
+    if (typeof prefs !== "object" || prefs === null) {
+      res.status(400).json({ error: "preferences 需为对象" });
+      return;
+    }
+    updatePreferences(database, req.session.userId!, prefs as Record<string, unknown>);
+    const user = findUserById(database, req.session.userId!)!;
     res.json(toPublicUser(user));
   });
 

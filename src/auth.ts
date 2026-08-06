@@ -50,6 +50,19 @@ export function login(db: DatabaseSync, username: string, password: string): Use
   return user;
 }
 
-export function toPublicUser(user: UserRow): { id: number; username: string; nickname: string | null } {
-  return { id: user.id, username: user.username, nickname: user.nickname };
+export function toPublicUser(user: UserRow): { id: number; username: string; nickname: string | null; preferences: Record<string, unknown> } {
+  let preferences: Record<string, unknown> = {};
+  if (user.preferences) {
+    try {
+      preferences = JSON.parse(user.preferences) as Record<string, unknown>;
+    } catch {
+      preferences = {};
+    }
+  }
+  return { id: user.id, username: user.username, nickname: user.nickname, preferences };
+}
+
+// 更新用户偏好（T029：users.preferences JSON 整体替换）
+export function updatePreferences(db: DatabaseSync, userId: number, prefs: Record<string, unknown>): void {
+  db.prepare("UPDATE users SET preferences = ? WHERE id = ?").run(JSON.stringify(prefs), userId);
 }
