@@ -225,6 +225,7 @@ export interface DrawConfig {
   newRatio?: number;
   reviewRatio?: number;
   reviewOnly?: boolean; // 纯复习模式：只从生词本抽取
+  includeSentenceIds?: number[]; // T037：复习模式必含的句子（立即复习：当前练习入本句子）
 }
 
 // 按比例抽取：U（未测试）: R（生词本复习）= 3:7，不足从已测试补齐（§3.3.4）
@@ -242,10 +243,17 @@ export function drawSession(
   const review = getReviewSentenceIds(db, userId).filter((id) => !reported.has(id));
   const tested = getTestedSentenceIds(db, userId).filter((id) => !reported.has(id));
 
-  // 纯复习模式：只从生词本抽取（T027：到期优先）
+  // 纯复习模式：只从生词本抽取（T027：到期优先；T037：include 必含）
   if (reviewOnly) {
     const due = getDueReviewSentenceIds(db, userId).filter((id) => !reported.has(id));
-    const result = sample(due, targetCount);
+    // T037：include 句（在生词本内）必含——立即复习必须包含当前练习入本句子，即使未到期
+    const include = (config.includeSentenceIds ?? []).filter((id) => review.includes(id) && !reported.has(id));
+    const result = include.slice(0, targetCount);
+    // 再从到期队列补足（避免与 include 重复）
+    for (const id of due) {
+      if (result.length >= targetCount) break;
+      if (!result.includes(id)) result.push(id);
+    }
     // 不足时从生词本其余句子补齐
     if (result.length < targetCount) {
       const fill = review.filter((id) => !result.includes(id));

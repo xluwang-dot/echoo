@@ -441,3 +441,48 @@ describe("T029 到期横幅数据（getDueCount）", () => {
     expect(getDueCount(db, userA)).toBe(0);
   });
 });
+
+describe("T037 立即复习 includeSentenceIds（必含指定句子）", () => {
+  beforeEach(() => {
+    db.exec("DELETE FROM test_records; DELETE FROM practice_sessions; DELETE FROM user_vocab; DELETE FROM word_status; DELETE FROM sentence_words; DELETE FROM sentences; DELETE FROM words;");
+    sid1 = db.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("foo bar baz.", "A。").lastInsertRowid as number;
+    sid2 = db.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("qux quux corge.", "B。").lastInsertRowid as number;
+    widFoo = db.prepare("INSERT INTO words (word) VALUES (?)").run("foo").lastInsertRowid as number;
+    const widBar = db.prepare("INSERT INTO words (word) VALUES (?)").run("bar").lastInsertRowid as number;
+    db.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(sid1, widFoo, 0, 0);
+    db.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(sid1, widBar, 1, 0);
+    addVocab(db, userA, widFoo, sid1); // 句子1 在生词本（未到期）
+    addVocab(db, userA, widBar, sid1);
+  });
+
+  it("includeSentenceIds：复习模式结果必含指定句（未到期也含）", () => {
+    const sids = drawSession(db, userA, 5, { reviewOnly: true, includeSentenceIds: [sid1] });
+    expect(sids).toContain(sid1);
+  });
+
+  it("includeSentenceIds：不在生词本的句子不包含", () => {
+    const sids = drawSession(db, userA, 5, { reviewOnly: true, includeSentenceIds: [sid2] });
+    expect(sids).not.toContain(sid2);
+  });
+});
+
+describe("T037b 立即复习 include 优先于到期队列", () => {
+  beforeEach(() => {
+    db.exec("DELETE FROM test_records; DELETE FROM practice_sessions; DELETE FROM user_vocab; DELETE FROM word_status; DELETE FROM sentence_words; DELETE FROM sentences; DELETE FROM words;");
+    // 两个生词句：sid1=include 目标（未到期），sid2=到期（会被现有逻辑优先抽走）
+    sid1 = db.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("alpha beta.", "A。").lastInsertRowid as number;
+    sid2 = db.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("gamma delta.", "B。").lastInsertRowid as number;
+    widFoo = db.prepare("INSERT INTO words (word) VALUES (?)").run("alpha").lastInsertRowid as number;
+    widBar = db.prepare("INSERT INTO words (word) VALUES (?)").run("gamma").lastInsertRowid as number;
+    db.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(sid1, widFoo, 0, 0);
+    db.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(sid2, widBar, 0, 0);
+    addVocab(db, userA, widFoo, sid1); // 未到期
+    addVocab(db, userA, widBar, sid2);
+    db.prepare("UPDATE user_vocab SET next_review=? WHERE user_id=? AND sentence_id=?").run(daysAgo(1), userA, sid2); // sid2 到期
+  });
+
+  it("include 未到期句也必含（优先于到期队列）", () => {
+    const sids = drawSession(db, userA, 1, { reviewOnly: true, includeSentenceIds: [sid1] });
+    expect(sids).toEqual([sid1]); // 修复前：due 优先抽 sid2
+  });
+});

@@ -92,8 +92,8 @@ export const api = {
   dueWords: () => req<{ words: VocabStateItem[] }>("GET", "/api/practice/due-words"),
   vocabState: (wordIds: number[]) => req<{ words: VocabStateItem[] }>("POST", "/api/practice/vocab-state", { wordIds }),
 
-  start: (targetCount: number, mode?: "practice" | "review" | "test", scope?: string) =>
-    req<StartResult>("POST", "/api/practice/start", { targetCount, mode, scope }),
+  start: (targetCount: number, mode?: "practice" | "review" | "test", scope?: string, includeSentenceIds?: number[]) =>
+    req<StartResult>("POST", "/api/practice/start", { targetCount, mode, scope, includeSentenceIds }),
   check: (char: string) => req<CheckResult>("POST", "/api/practice/check", { char }),
   hint: () => req<{ word: string; sentenceDone: boolean }>("POST", "/api/practice/hint", {}),
   backspace: () => req<{ typed: string }>("POST", "/api/practice/backspace", {}),

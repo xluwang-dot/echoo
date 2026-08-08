@@ -46,15 +46,8 @@ const dueWordsModal = ref(false);
 const dueWordsList = ref<VocabStateItem[]>([]);
 // T031：复习会话累计词 + 总结表格
 const sessionWordIds = ref<Set<number>>(new Set());
-const sessionWordNames = ref<Map<number, string>>(new Map()); // T036：词 id→词名（统计未入本词用）
-interface SummaryRow {
-  wordId: number;
-  word: string;
-  interval: number;
-  status: "learning" | "mastered" | "new"; // new=未入本（练习模式）
-  review_count: number;
-}
-const summaryWords = ref<SummaryRow[]>([]);
+const sessionSentenceIds = ref<number[]>([]); // T037：本次练习句子 id（立即复习必含）
+const summaryWords = ref<VocabStateItem[]>([]);
 
 // T035：练习模式整句完成待回车 + 点击单词入本
 const sentenceDoneWait = ref(false);
@@ -76,25 +69,12 @@ watch(phase, async (p) => {
   }
 });
 
-// T033/T036：同步拉取统计表格数据（不依赖 watch 异步时序；练习模式合并未入本词）
+// T033/T037：同步拉取统计表格数据（只统计生词本中的词）
 async function loadSummaryWords() {
   if (practiceMode.value === "test" || sessionWordIds.value.size === 0) return;
   try {
     const r = await api.vocabState([...sessionWordIds.value]);
-    const stateMap = new Map(r.words.map((w) => [w.wordId, w]));
-    // T036：无 user_vocab 记录的词（练习未入本）→ 状态 new
-    const all: SummaryRow[] = [...sessionWordIds.value].map((wordId) => {
-      const s = stateMap.get(wordId);
-      if (s) return s as SummaryRow;
-      return {
-        wordId,
-        word: sessionWordNames.value.get(wordId) ?? `#${wordId}`,
-        interval: 0,
-        status: "new" as const,
-        review_count: 0,
-      };
-    });
-    summaryWords.value = all;
+    summaryWords.value = r.words;
   } catch {
     summaryWords.value = [];
   }
@@ -341,12 +321,11 @@ async function finishSentence() {
       }
     }
   }
-  // 复习/练习总结（T031/T036）：累计本次会话涉及词（词名一并记录，供未入本统计）
+  // 复习/练习总结（T031/T037）：累计本次会话涉及词与句子
   for (const w of wordResults) {
     sessionWordIds.value.add(w.wordId);
-    const tok = tokens.find((t) => t.word_id === w.wordId);
-    if (tok) sessionWordNames.value.set(w.wordId, tok.word);
   }
+  sessionSentenceIds.value.push(sentence.value!.sentenceId); // T037：立即复习必含本句
   const ms = Date.now() - startMs.value;
   const r = await api.complete(wordResults);
   todayList.value.push({ en: sentence.value!.en, ms });
@@ -364,6 +343,7 @@ async function finishSentence() {
 
   if (r.done) {
     finishDone.value = true;
+    if (timerId) clearInterval(timerId); // T037：统计页停止计时
     clearAutoPlay(); // T034
     await loadSummaryWords(); // T033：统计表格数据在 done 渲染前就绪
     phase.value = "done";
@@ -385,14 +365,14 @@ async function finishSentence() {
 }
 
 // ---------- 开始/结束 ----------
-async function onStart(mode: "practice" | "review" | "test" = "practice", scope?: "all" | "near" | "fail" | "mastered") {
+async function onStart(mode: "practice" | "review" | "test" = "practice", scope?: "all" | "near" | "fail" | "mastered", includeSentenceIds?: number[]) {
   error.value = "";
   busy.value = true;
   practiceMode.value = mode;
   if (mode === "test") testScope.value = scope ?? "all";
   slideState.value = "idle"; // 重置滑动状态，避免上一轮 slide-exit 残留
   try {
-    const r = await api.start(targetCount.value, mode, mode === "test" ? testScope.value : undefined);
+    const r = await api.start(targetCount.value, mode, mode === "test" ? testScope.value : undefined, includeSentenceIds);
     total.value = r.total;
     sentence.value = r.current;
     wordIdx.value = r.current.wordIdx;
@@ -401,7 +381,7 @@ async function onStart(mode: "practice" | "review" | "test" = "practice", scope?
     failSet.value = new Set();
     if (mode === "test") testStats.value = { total: 0, pass: 0, fails: [] }; // 测试会话统计重置
     sessionWordIds.value = new Set(); // 新会话重新累计
-    sessionWordNames.value = new Map(); // T036
+    sessionSentenceIds.value = []; // T037
     summaryWords.value = [];
     sentenceDoneWait.value = false; // T035：整句完成待回车状态重置
     skipNonVocabWords(); // 复习/测试模式：跳到第一个生词
@@ -465,6 +445,12 @@ async function confirmAddWord() {
   } catch (e) {
     error.value = (e as Error).message;
   }
+}
+
+// T037：练习统计页「立即复习」——必含本次练习中入生词本的句子
+function onImmediateReview() {
+  const include = [...new Set(sessionSentenceIds.value)];
+  onStart("review", undefined, include);
 }
 
 // 到期横幅「查看单词」：拉取到期词并弹窗展示（T031）
@@ -756,7 +742,7 @@ onUnmounted(() => {
             <tbody>
               <tr v-for="w in summaryWords" :key="w.wordId">
                 <td class="word">{{ w.word }}</td>
-                <td :class="'status ' + w.status">{{ w.status === 'new' ? '未入本' : w.status === 'mastered' ? '已掌握' : '学习中' }}</td>
+                <td :class="'status ' + w.status">{{ w.status === 'mastered' ? '已掌握' : '学习中' }}</td>
                 <td v-for="iv in INTERVAL_COLS" :key="iv" :class="{ on: w.status === 'learning' && w.interval === iv }">
                   {{ w.status === 'learning' && w.interval === iv ? "✓" : "" }}
                 </td>
@@ -764,6 +750,10 @@ onUnmounted(() => {
               </tr>
             </tbody>
           </table>
+        </div>
+        <!-- T037：无入本词时的提示 -->
+        <div v-else-if="practiceMode === 'practice'" class="summary-wrap empty">
+          <p>本次练习没有加入生词本的单词（拼不出时点「提示」即可加入）</p>
         </div>
         <div v-if="practiceMode === 'test'" class="stats">
           <div class="stat">
@@ -794,6 +784,8 @@ onUnmounted(() => {
         </div>
         <div class="done-actions">
           <button @click="phase = 'menu'; sentence = null">返回首页</button>
+          <!-- T037：练习统计页「立即复习」（必含本次练习入本句） -->
+          <button v-if="practiceMode === 'practice'" class="danger" @click="onImmediateReview">立即复习</button>
           <button class="primary" @click="onStart(practiceMode)">再来一轮</button>
         </div>
       </div>
@@ -1136,6 +1128,10 @@ onUnmounted(() => {
 .summary-wrap h3 {
   margin: 0 0 8px;
   font-size: 15px;
+}
+.summary-wrap.empty p {
+  color: #999;
+  margin: 0;
 }
 .vocab-table {
   margin: 0 auto;

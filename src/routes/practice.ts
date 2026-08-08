@@ -65,12 +65,19 @@ export function practiceRouter(db?: DatabaseSync): Router {
     const mode = m === "review" || m === "test" ? m : "practice";
     // 测试范围（T028）
     const scope = ["all", "near", "fail", "mastered"].includes(req.body?.scope) ? req.body.scope : "all";
+    // T037：立即复习必含的句子（当前练习入本句）
+    const includeRaw = req.body?.includeSentenceIds;
+    const includeSentenceIds =
+      Array.isArray(includeRaw) && includeRaw.every((n: unknown) => Number.isInteger(n))
+        ? (includeRaw as number[])
+        : undefined;
     const state = createSession(database, req.session.userId!, targetCount, {
       newRatio: mode === "practice" ? 10 : 0,
       reviewRatio: mode === "review" ? 10 : 0,
       reviewOnly: mode === "review",
       mode,
       scope,
+      includeSentenceIds,
     });
     // 空会话（复习/测试无词句对）：友好提示而非 500（T032 边界）
     if (state.sentenceIds.length === 0) {
