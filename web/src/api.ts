@@ -46,7 +46,7 @@ export interface VocabStateItem {
   wordId: number;
   word: string;
   interval: number;
-  status: "learning" | "mastered";
+  status: "learning" | "candidate" | "mastered";
   review_count: number;
 }
 

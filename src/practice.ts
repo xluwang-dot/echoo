@@ -107,7 +107,7 @@ export interface VocabState {
   wordId: number;
   word: string;
   interval: number;
-  status: "learning" | "mastered";
+  status: "learning" | "candidate" | "mastered"; // T040：candidate=待测试验收
   review_count: number;
 }
 
@@ -129,7 +129,7 @@ function aggregateVocabRows(rows: VocabRow[]): VocabState[] {
         wordId: r.wordId,
         word: r.word,
         interval: r.interval,
-        status: r.status === "mastered" ? "mastered" : "learning",
+        status: r.status === "mastered" ? "mastered" : r.status === "candidate" ? "candidate" : "learning",
         review_count: r.review_count,
       });
     } else {
@@ -189,10 +189,14 @@ export function drawTestSentenceIds(
     .prepare("SELECT word_id, sentence_id, review_count, fail_count, status FROM user_vocab WHERE user_id=?")
     .all(userId) as unknown as VocabPair[];
   if (scope === "all") {
+    // T040：candidate（待测试验收）最高优先级，其次 near/fail/mastered(≤20%)/rest
+    const candidate = pairs.filter((p) => p.status === "candidate");
     const near = pairs.filter((p) => p.status === "learning" && p.review_count >= MASTERY_THRESHOLD - 2);
     const fail = pairs.filter((p) => p.fail_count >= 2);
     const mastered = pairs.filter((p) => p.status === "mastered");
-    const rest = pairs.filter((p) => !near.includes(p) && !fail.includes(p) && !mastered.includes(p));
+    const rest = pairs.filter(
+      (p) => !candidate.includes(p) && !near.includes(p) && !fail.includes(p) && !mastered.includes(p)
+    );
     // 层内按句子去重，层间优先级填充
     const result: number[] = [];
     const seen = new Set<number>();
@@ -204,7 +208,8 @@ export function drawTestSentenceIds(
         if (result.length >= targetCount) return;
       }
     };
-    push(sample(near, near.length));
+    push(sample(candidate, candidate.length));
+    if (result.length < targetCount) push(sample(near, near.length));
     if (result.length < targetCount) push(sample(fail, fail.length));
     if (result.length < targetCount) push(sample(mastered, Math.min(mastered.length, Math.ceil(targetCount * 0.2))));
     if (result.length < targetCount) push(sample(rest, rest.length));
@@ -212,7 +217,7 @@ export function drawTestSentenceIds(
   }
   // 指定 scope：过滤后去重句子随机抽
   const filtered = pairs.filter((p) => {
-    if (scope === "near") return p.status === "learning" && p.review_count >= MASTERY_THRESHOLD - 2;
+    if (scope === "near") return p.status === "candidate" || (p.status === "learning" && p.review_count >= MASTERY_THRESHOLD - 2);
     if (scope === "fail") return p.fail_count >= 2;
     if (scope === "mastered") return p.status === "mastered";
     return true;
@@ -349,15 +354,25 @@ export function recordWord(
   const now = new Date().toISOString();
   if (result === "mastered") {
     const pair = db
-      .prepare("SELECT interval, review_count, status FROM user_vocab WHERE user_id=? AND word_id=? AND sentence_id=?")
-      .get(userId, wordId, sentenceId) as { interval: number; review_count: number; status: string } | undefined;
+      .prepare("SELECT interval, review_count, status, next_review FROM user_vocab WHERE user_id=? AND word_id=? AND sentence_id=?")
+      .get(userId, wordId, sentenceId) as { interval: number; review_count: number; status: string; next_review: string | null } | undefined;
     if (pair) {
-      // 词句对推进：间隔前进、连续成功 +1，达阈值标 mastered
-      const { interval, reviewCount } = advanceInterval(pair.review_count, true);
-      const mastered = reviewCount >= MASTERY_THRESHOLD;
-      db.prepare(
-        "UPDATE user_vocab SET interval=?, review_count=?, next_review=?, status=? WHERE user_id=? AND word_id=? AND sentence_id=?"
-      ).run(interval, reviewCount, addDays(interval), mastered ? "mastered" : "learning", userId, wordId, sentenceId);
+      if (pair.status === "candidate") {
+        // T040：待测试候选 → 测试模式验收通过 → 掌握（间隔不推进）
+        db.prepare("UPDATE user_vocab SET status='mastered' WHERE user_id=? AND word_id=? AND sentence_id=?")
+          .run(userId, wordId, sentenceId);
+      } else {
+        // T039：到期复习成功才推进（SM 时间语义）；未到期/同日重复只巩固、不推进
+        const due = pair.next_review === null || pair.next_review <= todayStr();
+        if (due) {
+          const { interval, reviewCount } = advanceInterval(pair.review_count, true);
+          // T040：达阈值 → candidate（待测试验收），不再直接 mastered
+          const status = reviewCount >= MASTERY_THRESHOLD ? "candidate" : "learning";
+          db.prepare(
+            "UPDATE user_vocab SET interval=?, review_count=?, next_review=?, status=? WHERE user_id=? AND word_id=? AND sentence_id=?"
+          ).run(interval, reviewCount, addDays(interval), status, userId, wordId, sentenceId);
+        }
+      }
     }
     // 统计展示（word_status，与生词本判定独立）
     db.prepare(

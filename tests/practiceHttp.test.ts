@@ -186,11 +186,11 @@ describe("T010 practice HTTP API", () => {
         { wordId: widBar, result: "mastered" },
       ],
     });
-    // v1.9：整句拼对不再移除词句对；foo 仍在生词本且连续成功 =1
+    // v1.9：整句拼对不再移除词句对；hint 后 next_review=明天 → 当日 complete 属提前复习，T039 下不推进
     const alice = db.prepare("SELECT id FROM users WHERE username = ?").get("alice") as { id: number };
     const v = db.prepare("SELECT review_count, status FROM user_vocab WHERE user_id=? AND word_id=? AND sentence_id=?").get(alice.id, widFoo, sid1) as { review_count: number; status: string };
     expect(v).toBeTruthy();
-    expect(v.review_count).toBe(1);
+    expect(v.review_count).toBe(0); // T039：未到期成功不推进
     expect(v.status).toBe("learning");
   });
 

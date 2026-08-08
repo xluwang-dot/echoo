@@ -742,7 +742,7 @@ onUnmounted(() => {
             <tbody>
               <tr v-for="w in summaryWords" :key="w.wordId">
                 <td class="word">{{ w.word }}</td>
-                <td :class="'status ' + w.status">{{ w.status === 'mastered' ? '已掌握' : '学习中' }}</td>
+                <td :class="'status ' + w.status">{{ w.status === 'mastered' ? '已掌握' : w.status === 'candidate' ? '待测试' : '学习中' }}</td>
                 <td v-for="iv in INTERVAL_COLS" :key="iv" :class="{ on: w.status === 'learning' && w.interval === iv }">
                   {{ w.status === 'learning' && w.interval === iv ? "✓" : "" }}
                 </td>
@@ -802,7 +802,7 @@ onUnmounted(() => {
               <tbody>
                 <tr v-for="w in dueWordsList" :key="w.wordId">
                   <td class="word">{{ w.word }}</td>
-                  <td :class="'status ' + w.status">{{ w.status === 'mastered' ? '已掌握' : '学习中' }}</td>
+                  <td :class="'status ' + w.status">{{ w.status === 'mastered' ? '已掌握' : w.status === 'candidate' ? '待测试' : '学习中' }}</td>
                   <td v-for="iv in INTERVAL_COLS" :key="iv" :class="{ on: w.status === 'learning' && w.interval === iv }">
                     {{ w.status === 'learning' && w.interval === iv ? "✓" : "" }}
                   </td>
@@ -1169,6 +1169,10 @@ onUnmounted(() => {
 }
 .vocab-table td.status.mastered {
   color: #d46b08;
+  font-weight: 700;
+}
+.vocab-table td.status.candidate {
+  color: #c0392b;
   font-weight: 700;
 }
 /* T036：加入生词本弹窗突出单词 */

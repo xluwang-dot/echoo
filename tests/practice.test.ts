@@ -195,7 +195,7 @@ describe("T009 practice 会话", () => {
     expect(uv).toBeTruthy();
   });
 
-  it("completeSentence：整句拼对 → 词句对推进不删除，达阈值标 mastered（T027）", () => {
+  it("completeSentence：整句拼对 → 词句对推进不删除，5 次到期成功 → candidate（T027/T040）", () => {
     // 准备两个句子的词句对
     const sid2 = db.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("baz qux.", "baz 和 qux。").lastInsertRowid as number;
     const widBaz = db.prepare("INSERT INTO words (word) VALUES (?)").run("baz").lastInsertRowid as number;
@@ -213,20 +213,24 @@ describe("T009 practice 会话", () => {
     // v1.9：词句对不整句删除，仍在生词本且 review_count=1
     const v1 = db.prepare("SELECT COUNT(*) AS c FROM user_vocab WHERE user_id=? AND sentence_id=?").get(userA, sid1) as { c: number };
     expect(v1.c).toBe(2);
-    const v2 = db.prepare("SELECT review_count FROM user_vocab WHERE user_id=? AND sentence_id=? AND word_id=?").get(userA, sid1, widFoo) as { review_count: number };
-    expect(v2.review_count).toBe(1);
-    // 继续推进达阈值 → 标 mastered
+    // 推进 5 次到期复习（第一次已在上面发生，再补 4 次，每次先把 next_review 置为昨天模拟到期）→ candidate
     for (let i = 0; i < MASTERY_THRESHOLD - 1; i++) {
+      db.prepare("UPDATE user_vocab SET next_review=? WHERE user_id=? AND word_id=? AND sentence_id=?").run(daysAgo(1), userA, widFoo, sid1);
       completeSentence(db, sess, userA, sid1, [
         { wordId: widFoo, result: "mastered" },
         { wordId: widBar, result: "mastered" },
       ]);
     }
     const st = db.prepare("SELECT status FROM user_vocab WHERE user_id=? AND word_id=? AND sentence_id=?").get(userA, widFoo, sid1) as { status: string };
-    expect(st.status).toBe("mastered");
+    expect(st.status).toBe("candidate"); // T040：5 次到期成功 → 待测试验收（非直接 mastered）
     // 他句（sid2）不受影响
     const v3 = db.prepare("SELECT COUNT(*) AS c FROM user_vocab WHERE user_id=? AND sentence_id=?").get(userA, sid2) as { c: number };
     expect(v3.c).toBe(1);
+    // 测试模式验收通过 → mastered
+    db.prepare("UPDATE user_vocab SET next_review=? WHERE user_id=? AND word_id=? AND sentence_id=?").run(daysAgo(1), userA, widFoo, sid1);
+    completeSentence(db, sess, userA, sid1, [{ wordId: widFoo, result: "mastered" }]);
+    const st2 = db.prepare("SELECT status FROM user_vocab WHERE user_id=? AND word_id=? AND sentence_id=?").get(userA, widFoo, sid1) as { status: string };
+    expect(st2.status).toBe("mastered");
   });
 
   it("getSentenceWithTokens 返回句子 + tokens（含 is_name）", () => {
@@ -300,18 +304,25 @@ describe("T027 复习调度（SM-2 间隔推进 + 到期优先）", () => {
     expect(advanceInterval(4, false)).toEqual({ interval: 1, reviewCount: 0 }); // 失败重置
   });
 
-  it("recordWord mastered：词句对推进间隔/next_review，达阈值标 mastered", () => {
+  it("recordWord mastered：词句对推进间隔/next_review，达阈值 → candidate（T027/T039/T040）", () => {
     addVocab(db, userA, widFoo, sid1);
     const sid = startSession(db, userA, 1);
-    recordWord(db, sid, userA, widFoo, sid1, "mastered");
+    recordWord(db, sid, userA, widFoo, sid1, "mastered"); // next_review NULL → 到期 → 推进
     let v = db.prepare("SELECT interval, review_count, status FROM user_vocab WHERE user_id=? AND word_id=? AND sentence_id=?").get(userA, widFoo, sid1) as { interval: number; review_count: number; status: string };
     expect(v.interval).toBe(1);
     expect(v.review_count).toBe(1);
     expect(v.status).toBe("learning");
-    // 再推进 4 次 → 达阈值（5 次）
-    for (let i = 0; i < MASTERY_THRESHOLD - 1; i++) recordWord(db, sid, userA, widFoo, sid1, "mastered");
+    // 再推进 4 次（每次模拟到期）→ 达阈值（5 次）→ candidate（T040：不再直接 mastered）
+    for (let i = 0; i < MASTERY_THRESHOLD - 1; i++) {
+      db.prepare("UPDATE user_vocab SET next_review=? WHERE user_id=? AND word_id=? AND sentence_id=?").run(daysAgo(1), userA, widFoo, sid1);
+      recordWord(db, sid, userA, widFoo, sid1, "mastered");
+    }
     v = db.prepare("SELECT interval, review_count, status FROM user_vocab WHERE user_id=? AND word_id=? AND sentence_id=?").get(userA, widFoo, sid1) as { interval: number; review_count: number; status: string };
     expect(v.review_count).toBe(MASTERY_THRESHOLD);
+    expect(v.status).toBe("candidate");
+    // 测试模式验收通过 → mastered
+    recordWord(db, sid, userA, widFoo, sid1, "mastered");
+    v = db.prepare("SELECT status FROM user_vocab WHERE user_id=? AND word_id=? AND sentence_id=?").get(userA, widFoo, sid1) as { status: string };
     expect(v.status).toBe("mastered");
   });
 
@@ -484,5 +495,121 @@ describe("T037b 立即复习 include 优先于到期队列", () => {
   it("include 未到期句也必含（优先于到期队列）", () => {
     const sids = drawSession(db, userA, 1, { reviewOnly: true, includeSentenceIds: [sid1] });
     expect(sids).toEqual([sid1]); // 修复前：due 优先抽 sid2
+  });
+});
+
+describe("T039 SM 时间语义：未到期复习成功不推进", () => {
+  beforeEach(() => {
+    db.exec("DELETE FROM test_records; DELETE FROM practice_sessions; DELETE FROM user_vocab; DELETE FROM word_status; DELETE FROM sentence_words; DELETE FROM sentences; DELETE FROM words;");
+    sid1 = db.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("foo bar baz.", "T039。").lastInsertRowid as number;
+    widFoo = db.prepare("INSERT INTO words (word) VALUES (?)").run("foo").lastInsertRowid as number;
+    db.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(sid1, widFoo, 0, 0);
+    addVocab(db, userA, widFoo, sid1); // next_review = 明天
+  });
+
+  const pair = () => db.prepare("SELECT interval, review_count, status, next_review FROM user_vocab WHERE user_id=? AND word_id=? AND sentence_id=?").get(userA, widFoo, sid1) as { interval: number; review_count: number; status: string; next_review: string };
+
+  it("到期复习成功 → 间隔进入序列下一档（1→3）", () => {
+    // 初始：已成功过一次（interval=1, review_count=1），今日到期
+    db.prepare("UPDATE user_vocab SET interval=1, review_count=1, next_review=? WHERE user_id=? AND word_id=? AND sentence_id=?").run(daysAgo(1), userA, widFoo, sid1);
+    const sid = startSession(db, userA, 1);
+    recordWord(db, sid, userA, widFoo, sid1, "mastered");
+    const p = pair();
+    expect(p.interval).toBe(3);
+    expect(p.review_count).toBe(2);
+    expect(p.next_review).toBe(daysAhead(3));
+  });
+
+  it("未到期（明天到期）同日复习成功 → 不推进", () => {
+    // 初始：interval=3, review_count=2，明天才到期
+    db.prepare("UPDATE user_vocab SET interval=3, review_count=2, next_review=? WHERE user_id=? AND word_id=? AND sentence_id=?").run(daysAhead(1), userA, widFoo, sid1);
+    const sid = startSession(db, userA, 1);
+    recordWord(db, sid, userA, widFoo, sid1, "mastered");
+    const p = pair();
+    expect(p.interval).toBe(3);
+    expect(p.review_count).toBe(2);
+    expect(p.next_review).toBe(daysAhead(1)); // 原计划不变
+  });
+
+  it("未到期失败（hint）→ 仍重置 1 天", () => {
+    db.prepare("UPDATE user_vocab SET interval=3, review_count=1, next_review=? WHERE user_id=? AND word_id=? AND sentence_id=?").run(daysAhead(1), userA, widFoo, sid1);
+    const sid = startSession(db, userA, 1);
+    recordWord(db, sid, userA, widFoo, sid1, "hint");
+    const p = pair();
+    expect(p.interval).toBe(1);
+    expect(p.review_count).toBe(0);
+  });
+});
+
+describe("T040 掌握判定：5 次到期成功 → candidate → 测试通过 → mastered", () => {
+  beforeEach(() => {
+    db.exec("DELETE FROM test_records; DELETE FROM practice_sessions; DELETE FROM user_vocab; DELETE FROM word_status; DELETE FROM sentence_words; DELETE FROM sentences; DELETE FROM words;");
+    sid1 = db.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("foo bar baz.", "T040。").lastInsertRowid as number;
+    sid2 = db.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("qux quux.", "T040b。").lastInsertRowid as number;
+    widFoo = db.prepare("INSERT INTO words (word) VALUES (?)").run("foo").lastInsertRowid as number;
+    const widBar = db.prepare("INSERT INTO words (word) VALUES (?)").run("bar").lastInsertRowid as number;
+    db.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(sid1, widFoo, 0, 0);
+    db.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(sid1, widBar, 1, 0);
+    addVocab(db, userA, widFoo, sid1);
+    addVocab(db, userA, widBar, sid1);
+  });
+
+  const pairFoo = () => db.prepare("SELECT interval, review_count, status, fail_count FROM user_vocab WHERE user_id=? AND word_id=? AND sentence_id=?").get(userA, widFoo, sid1) as { interval: number; review_count: number; status: string; fail_count: number };
+
+  // 造 candidate：5 次到期复习成功（每次先把 next_review 置为昨天）
+  const toCandidate = () => {
+    for (let i = 0; i < MASTERY_THRESHOLD; i++) {
+      db.prepare("UPDATE user_vocab SET next_review=? WHERE user_id=? AND word_id=? AND sentence_id=?").run(daysAgo(1), userA, widFoo, sid1);
+      const sid = startSession(db, userA, 1);
+      recordWord(db, sid, userA, widFoo, sid1, "mastered");
+    }
+  };
+
+  it("5 次到期复习成功 → status='candidate'（非直接 mastered）", () => {
+    toCandidate();
+    expect(pairFoo().status).toBe("candidate");
+    expect(pairFoo().interval).toBe(35);
+    expect(pairFoo().review_count).toBe(5);
+  });
+
+  it("candidate 测试模式通过 → mastered（间隔不推进）", () => {
+    toCandidate();
+    const sid = startSession(db, userA, 1);
+    recordWord(db, sid, userA, widFoo, sid1, "mastered");
+    expect(pairFoo().status).toBe("mastered");
+    expect(pairFoo().interval).toBe(35);
+  });
+
+  it("candidate 测试失败 → 降级 learning（间隔重置、fail_count+1）", () => {
+    toCandidate();
+    const sid = startSession(db, userA, 1);
+    recordWord(db, sid, userA, widFoo, sid1, "test_fail");
+    const p = pairFoo();
+    expect(p.status).toBe("learning");
+    expect(p.interval).toBe(1);
+    expect(p.review_count).toBe(0);
+    expect(p.fail_count).toBe(1);
+  });
+
+  it("candidate 不入复习队列（到期列表不含）", () => {
+    toCandidate();
+    expect(getDueReviewSentenceIds(db, userA)).not.toContain(sid1);
+    expect(getDueCount(db, userA)).toBe(0);
+  });
+
+  it("drawTestSentenceIds：candidate 优先进入测试池", () => {
+    toCandidate();
+    const sids = drawTestSentenceIds(db, userA, 1, "all");
+    expect(sids).toContain(sid1); // candidate 最高优先级
+  });
+
+  it("candidate 完成后学习中途失败：mastered 词测试失败降级（既有行为保持）", () => {
+    toCandidate();
+    const sid = startSession(db, userA, 1);
+    recordWord(db, sid, userA, widFoo, sid1, "mastered"); // → mastered
+    recordWord(db, sid, userA, widFoo, sid1, "test_fail"); // 再失败 → 降级
+    const p = pairFoo();
+    expect(p.status).toBe("learning");
+    expect(p.interval).toBe(1);
   });
 });
