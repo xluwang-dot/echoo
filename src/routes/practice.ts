@@ -40,7 +40,7 @@ function skipNonVocabWords(
   tokens: { in_vocab: boolean; is_name: number }[],
   mode: string
 ) {
-  if (mode !== "review") return;
+  if (mode !== "review" && mode !== "test") return; // B0004：测试模式同样跳词（与前端一致）
   while (
     state.wordIdx < tokens.length &&
     (!tokens[state.wordIdx].in_vocab || tokens[state.wordIdx].is_name === 1)
@@ -72,6 +72,14 @@ export function practiceRouter(db?: DatabaseSync): Router {
       mode,
       scope,
     });
+    // 空会话（复习/测试无词句对）：友好提示而非 500（T032 边界）
+    if (state.sentenceIds.length === 0) {
+      clearSession(req.session.userId!);
+      res.status(400).json({
+        error: mode === "review" ? "生词本暂无内容，先去「练习」收集生词吧" : "暂无生词可测，先去「练习」收集生词吧",
+      });
+      return;
+    }
     skipNameWords(state, []); // start 后 skipNameWords 需要 tokens，后面 currentTokens 里处理
     const cur = currentTokens(database, state, req.session.userId!);
     skipNameWords(state, cur.sentence.tokens);
@@ -193,6 +201,10 @@ export function practiceRouter(db?: DatabaseSync): Router {
     } else {
       const cur = getSentenceWithTokens(database, state.sentenceIds[state.idx], req.session.userId!)!;
       skipNameWords(state, cur.tokens);
+      // B0004：复习/测试模式继续跳过非生词，保持与前端 skipNonVocabWords 一致
+      if (state.mode === "review" || state.mode === "test") {
+        skipNonVocabWords(state, cur.tokens, state.mode);
+      }
       res.json({
         done: false,
         next: {

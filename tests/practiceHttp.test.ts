@@ -568,3 +568,149 @@ describe("T031 单词状态聚合（vocab-state + due-words）", () => {
     expect(res.body.words).toEqual([]);
   });
 });
+
+describe("T032 复习/测试模式中段无法输入（complete 跳词不完整, B0004）", () => {
+  const TEST_DB6 = path.join(os.tmpdir(), "word_typer_test_t032.db");
+  let db6: DatabaseSync;
+  let app6: express.Express;
+  let agent6: request.Agent;
+  let u6: { id: number };
+  // 句子 A: She(人名/生词) school(非生词) library(生词)
+  // 句子 B: He(人名/生词) class(非生词) pencil(生词)
+  let sA: number;
+  let sB: number;
+  let wLibrary: number;
+  let wPencil: number;
+
+  beforeAll(async () => {
+    db6 = freshDb();
+    db6.prepare("INSERT INTO users (username, password_hash) VALUES (?, ?)").run("frank", hashPassword("f123456"));
+    u6 = db6.prepare("SELECT id FROM users WHERE username='frank'").get() as { id: number };
+    const mk = (en: string, zh: string, words: [string, number, boolean][]) => {
+      const sid = db6.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run(en, zh).lastInsertRowid as number;
+      for (const [w, pos, name] of words) {
+        const wid = db6.prepare("INSERT INTO words (word, is_name) VALUES (?, ?)").run(w, name ? 1 : 0).lastInsertRowid as number;
+        db6.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(sid, wid, pos, 0);
+      }
+      return sid;
+    };
+    // 生词（入本）：
+    wLibrary = db6.prepare("SELECT id FROM words WHERE word='library'").get() as { id: number } | undefined ? (db6.prepare("SELECT id FROM words WHERE word='library'").get() as { id: number }).id : 0;
+    wPencil = db6.prepare("SELECT id FROM words WHERE word='pencil'").get() as { id: number } | undefined ? (db6.prepare("SELECT id FROM words WHERE word='pencil'").get() as { id: number }).id : 0;
+    sA = mk("She school library.", "A 句。", [["She", 0, true], ["school", 1, false], ["library", 2, false]]);
+    sB = mk("He class pencil.", "B 句。", [["He", 0, true], ["class", 1, false], ["pencil", 2, false]]);
+    // 词句对（人名+生词都入本，昨天到期 → 复习池）
+    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    const addVocab6 = (wid: number, sid: number) => {
+      db6.prepare("INSERT INTO user_vocab (user_id, word_id, sentence_id, created_at, interval, review_count, next_review, status, fail_count) VALUES (?,?,?,?,1,0,?,'learning',0)")
+        .run(u6.id, wid, sid, "2026-08-06", yesterday);
+    };
+    for (const [wid, sid] of [
+      [db6.prepare("SELECT id FROM words WHERE word='She'").get() as { id: number }, sA],
+      [db6.prepare("SELECT id FROM words WHERE word='library'").get() as { id: number }, sA],
+      [db6.prepare("SELECT id FROM words WHERE word='He'").get() as { id: number }, sB],
+      [db6.prepare("SELECT id FROM words WHERE word='pencil'").get() as { id: number }, sB],
+    ]) addVocab6(wid.id, sid);
+
+    app6 = express();
+    app6.use(express.json());
+    app6.use(configureSession());
+    app6.use("/api/auth", authRouter(db6));
+    app6.use("/api/practice", practiceRouter(db6));
+    agent6 = request.agent(app6);
+    const r = await agent6.post("/api/auth/login").send({ username: "frank", password: "f123456" });
+    expect(r.status).toBe(200);
+  });
+  afterAll(() => {
+    db6.close();
+    if (fs.existsSync(TEST_DB6)) fs.unlinkSync(TEST_DB6);
+  });
+  beforeEach(() => {
+    resetSessionStore();
+  });
+
+  it("复习模式 start：current.wordIdx 指向第一个生词（跳过句首人名+非生词）", async () => {
+    const res = await agent6.post("/api/practice/start").send({ targetCount: 1, mode: "review" });
+    expect(res.status).toBe(200);
+    expect(res.body.current.wordIdx).toBe(2); // library
+  });
+
+  it("复习模式 complete 后：next.wordIdx 指向下一句第一个生词（B0004 修复点）", async () => {
+    const st = await agent6.post("/api/practice/start").send({ targetCount: 2, mode: "review" });
+    // 用当前句的生词动态构造 wordResults
+    const cur = st.body.current;
+    const results = cur.tokens
+      .filter((t: { in_vocab: boolean; is_name: number }) => t.in_vocab && t.is_name !== 1)
+      .map((t: { word_id: number }) => ({ wordId: t.word_id, result: "mastered" }));
+    const comp = await agent6.post("/api/practice/complete").send({ wordResults: results });
+    expect(comp.status).toBe(200);
+    expect(comp.body.done).toBe(false);
+    const next = comp.body.next;
+    expect(next.sentenceId).toBe(sB === st.body.current.sentenceId ? sA : sB); // 另一句
+    expect(next.wordIdx).toBe(next.tokens.findIndex((t: { in_vocab: boolean; is_name: number }) => t.in_vocab && t.is_name !== 1)); // 第一个生词（修复前=1）
+  });
+
+  it("复习模式 complete 后输入流：check 生词首字符 → correct（修复前永远 false）", async () => {
+    const st = await agent6.post("/api/practice/start").send({ targetCount: 2, mode: "review" });
+    const results = st.body.current.tokens
+      .filter((t: { in_vocab: boolean; is_name: number }) => t.in_vocab && t.is_name !== 1)
+      .map((t: { word_id: number }) => ({ wordId: t.word_id, result: "mastered" }));
+    const comp = await agent6.post("/api/practice/complete").send({ wordResults: results });
+    const next = comp.body.next;
+    const firstWord = next.tokens.find((t: { in_vocab: boolean; is_name: number }) => t.in_vocab && t.is_name !== 1).word as string;
+    const chk = await agent6.post("/api/practice/check").send({ char: firstWord[0] });
+    expect(chk.body.correct).toBe(true);
+    const chk2 = await agent6.post("/api/practice/check").send({ char: firstWord[1] });
+    expect(chk2.body.correct).toBe(true);
+  });
+
+  it("测试模式 complete 后：next.wordIdx 同样跳过人名/非生词（连带修复）", async () => {
+    const st = await agent6.post("/api/practice/start").send({ targetCount: 2, mode: "test" });
+    const cur = st.body.current;
+    const results = cur.tokens
+      .filter((t: { in_vocab: boolean; is_name: number }) => t.in_vocab && t.is_name !== 1)
+      .map((t: { word_id: number }) => ({ wordId: t.word_id, result: "mastered" }));
+    const comp = await agent6.post("/api/practice/complete").send({ wordResults: results });
+    expect(comp.status).toBe(200);
+    const next = comp.body.next;
+    expect(next.wordIdx).toBe(next.tokens.findIndex((t: { in_vocab: boolean; is_name: number }) => t.in_vocab && t.is_name !== 1));
+  });
+});
+
+describe("T032 边界：空生词本复习/测试会话（不再 500）", () => {
+  const TEST_DB7 = path.join(os.tmpdir(), "word_typer_test_t032b.db");
+  let db7: DatabaseSync;
+  let app7: express.Express;
+  let agent7: request.Agent;
+
+  beforeAll(async () => {
+    db7 = freshDb();
+    db7.prepare("INSERT INTO users (username, password_hash) VALUES (?, ?)").run("gina", hashPassword("g123456"));
+    app7 = express();
+    app7.use(express.json());
+    app7.use(configureSession());
+    app7.use("/api/auth", authRouter(db7));
+    app7.use("/api/practice", practiceRouter(db7));
+    agent7 = request.agent(app7);
+    const r = await agent7.post("/api/auth/login").send({ username: "gina", password: "g123456" });
+    expect(r.status).toBe(200);
+  });
+  afterAll(() => {
+    db7.close();
+    if (fs.existsSync(TEST_DB7)) fs.unlinkSync(TEST_DB7);
+  });
+  beforeEach(() => {
+    resetSessionStore();
+  });
+
+  it("复习模式：无词句对时返回 400 友好错误（不 500）", async () => {
+    const res = await agent7.post("/api/practice/start").send({ targetCount: 5, mode: "review" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("生词本");
+  });
+
+  it("测试模式：无词句对时返回 400 友好错误（不 500）", async () => {
+    const res = await agent7.post("/api/practice/start").send({ targetCount: 5, mode: "test" });
+    expect(res.status).toBe(400);
+  });
+});
