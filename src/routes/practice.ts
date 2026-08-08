@@ -85,7 +85,7 @@ export function practiceRouter(db?: DatabaseSync): Router {
     skipNameWords(state, cur.sentence.tokens);
     skipNonVocabWords(state, cur.sentence.tokens, state.mode); // 复习模式跳过非生词
     res.json({
-      total: state.targetCount,
+      total: state.sentenceIds.length, // T033：返回实际抽取句数（复习池不足 targetCount 时）
       current: {
         sentenceId: cur.sentenceId,
         zh: cur.sentence.zh,

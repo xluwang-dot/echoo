@@ -51,7 +51,7 @@ const summaryWords = ref<VocabStateItem[]>([]);
 // 间隔表格列（记忆曲线：1→3→7→16→35 天）
 const INTERVAL_COLS = [1, 3, 7, 16, 35];
 
-// T031：回首页刷新到期数量（due=0 横幅自动消失）；复习结束拉总结表格
+// T031：回首页刷新到期数量（due=0 横幅自动消失）
 watch(phase, async (p) => {
   if (p === "menu" && bannerLoaded.value) {
     try {
@@ -61,15 +61,18 @@ watch(phase, async (p) => {
       // 静默
     }
   }
-  if (p === "done" && practiceMode.value === "review" && sessionWordIds.value.size > 0) {
-    try {
-      const r = await api.vocabState([...sessionWordIds.value]);
-      summaryWords.value = r.words;
-    } catch {
-      summaryWords.value = [];
-    }
-  }
 });
+
+// T033：同步拉取统计表格数据（不依赖 watch 异步时序）
+async function loadSummaryWords() {
+  if (practiceMode.value === "test" || sessionWordIds.value.size === 0) return;
+  try {
+    const r = await api.vocabState([...sessionWordIds.value]);
+    summaryWords.value = r.words;
+  } catch {
+    summaryWords.value = [];
+  }
+}
 
 // 特效状态
 const slideState = ref<"idle" | "exit" | "enter">("idle");
@@ -323,6 +326,7 @@ async function finishSentence() {
 
   if (r.done) {
     finishDone.value = true;
+    await loadSummaryWords(); // T033：统计表格数据在 done 渲染前就绪
     phase.value = "done";
   } else {
     // 替换句子，新句从右侧滑入
@@ -417,6 +421,7 @@ async function onFinish() {
     // 忽略：会话可能已结束
   }
   if (timerId) clearInterval(timerId);
+  await loadSummaryWords(); // T033：提前结束时也可靠显示统计
   phase.value = "done";
 }
 

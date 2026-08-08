@@ -714,3 +714,46 @@ describe("T032 边界：空生词本复习/测试会话（不再 500）", () => 
     expect(res.status).toBe(400);
   });
 });
+
+describe("T033 start total 返回实际抽取数（非请求值）", () => {
+  const TEST_DB8 = path.join(os.tmpdir(), "word_typer_test_t033.db");
+  let db8: DatabaseSync;
+  let app8: express.Express;
+  let agent8: request.Agent;
+
+  beforeAll(async () => {
+    db8 = freshDb();
+    db8.prepare("INSERT INTO users (username, password_hash) VALUES (?, ?)").run("henry", hashPassword("h123456"));
+    const uid = db8.prepare("SELECT id FROM users WHERE username='henry'").get() as { id: number };
+    // 造 2 个复习句（各 1 个生词词句对，昨天到期）
+    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    for (const [en, w] of [["foo bar.", "foo"], ["baz qux.", "baz"]] as const) {
+      const sid = db8.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run(en, en).lastInsertRowid as number;
+      const wid = db8.prepare("INSERT INTO words (word) VALUES (?)").run(w).lastInsertRowid as number;
+      db8.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(sid, wid, 0, 0);
+      db8.prepare("INSERT INTO user_vocab (user_id, word_id, sentence_id, created_at, interval, review_count, next_review, status, fail_count) VALUES (?,?,?,?,1,0,?,'learning',0)")
+        .run(uid.id, wid, sid, "2026-08-06", yesterday);
+    }
+    app8 = express();
+    app8.use(express.json());
+    app8.use(configureSession());
+    app8.use("/api/auth", authRouter(db8));
+    app8.use("/api/practice", practiceRouter(db8));
+    agent8 = request.agent(app8);
+    const r = await agent8.post("/api/auth/login").send({ username: "henry", password: "h123456" });
+    expect(r.status).toBe(200);
+  });
+  afterAll(() => {
+    db8.close();
+    if (fs.existsSync(TEST_DB8)) fs.unlinkSync(TEST_DB8);
+  });
+  beforeEach(() => {
+    resetSessionStore();
+  });
+
+  it("复习池仅 2 句：targetCount=10 时 total 返回 2", async () => {
+    const res = await agent8.post("/api/practice/start").send({ targetCount: 10, mode: "review" });
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(2); // 修复前为 10
+  });
+});
