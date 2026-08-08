@@ -757,3 +757,59 @@ describe("T033 start total 返回实际抽取数（非请求值）", () => {
     expect(res.body.total).toBe(2); // 修复前为 10
   });
 });
+
+describe("T035 点击单词加入生词本（add-vocab）", () => {
+  const TEST_DB9 = path.join(os.tmpdir(), "word_typer_test_t035.db");
+  let db9: DatabaseSync;
+  let app9: express.Express;
+  let agent9: request.Agent;
+  let s9: number;
+  let wFoo9: number;
+  let wBar9: number;
+
+  beforeAll(async () => {
+    db9 = freshDb();
+    db9.prepare("INSERT INTO users (username, password_hash) VALUES (?, ?)").run("iris", hashPassword("i123456"));
+    const uid = db9.prepare("SELECT id FROM users WHERE username='iris'").get() as { id: number };
+    s9 = db9.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("foo bar.", "foo bar。").lastInsertRowid as number;
+    wFoo9 = db9.prepare("INSERT INTO words (word) VALUES (?)").run("foo").lastInsertRowid as number;
+    wBar9 = db9.prepare("INSERT INTO words (word) VALUES (?)").run("bar").lastInsertRowid as number;
+    db9.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(s9, wFoo9, 0, 0);
+    db9.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(s9, wBar9, 1, 0);
+    app9 = express();
+    app9.use(express.json());
+    app9.use(configureSession());
+    app9.use("/api/auth", authRouter(db9));
+    app9.use("/api/practice", practiceRouter(db9));
+    agent9 = request.agent(app9);
+    const r = await agent9.post("/api/auth/login").send({ username: "iris", password: "i123456" });
+    expect(r.status).toBe(200);
+  });
+  afterAll(() => {
+    db9.close();
+    if (fs.existsSync(TEST_DB9)) fs.unlinkSync(TEST_DB9);
+  });
+  beforeEach(() => {
+    resetSessionStore();
+  });
+
+  it("add-vocab：会话中将词加入生词本（词句对落库）", async () => {
+    await agent9.post("/api/practice/start").send({ targetCount: 1, mode: "practice" });
+    const res = await agent9.post("/api/practice/add-vocab").send({ wordId: wBar9 });
+    expect(res.status).toBe(200);
+    const uid = db9.prepare("SELECT id FROM users WHERE username='iris'").get() as { id: number };
+    const row = db9.prepare("SELECT * FROM user_vocab WHERE user_id=? AND word_id=? AND sentence_id=?").get(uid.id, wBar9, s9);
+    expect(row).toBeTruthy();
+  });
+
+  it("add-vocab：无进行中会话 → 409", async () => {
+    const res = await agent9.post("/api/practice/add-vocab").send({ wordId: wFoo9 });
+    expect(res.status).toBe(409);
+  });
+
+  it("add-vocab：wordId 非法 → 400", async () => {
+    await agent9.post("/api/practice/start").send({ targetCount: 1, mode: "practice" });
+    const res = await agent9.post("/api/practice/add-vocab").send({ wordId: "x" });
+    expect(res.status).toBe(400);
+  });
+});

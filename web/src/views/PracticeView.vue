@@ -48,6 +48,11 @@ const dueWordsList = ref<VocabStateItem[]>([]);
 const sessionWordIds = ref<Set<number>>(new Set());
 const summaryWords = ref<VocabStateItem[]>([]);
 
+// T035：练习模式整句完成待回车 + 点击单词入本
+const sentenceDoneWait = ref(false);
+const wordConfirmOpen = ref(false);
+const wordConfirm = ref<{ word: string; wordId: number } | null>(null);
+
 // 间隔表格列（记忆曲线：1→3→7→16→35 天）
 const INTERVAL_COLS = [1, 3, 7, 16, 35];
 
@@ -206,9 +211,15 @@ async function onChar(ch: string) {
       if (r.wordDone) {
         // 整词完成
         if (r.sentenceDone) {
-          await finishSentence();
+          // T035：练习模式整句完成后等待回车，不自动切句；复习/测试模式自动推进
+          if (practiceMode.value === "practice") {
+            sentenceDoneWait.value = true;
+            clearAutoPlay();
+          } else {
+            await finishSentence();
+          }
         } else if (vocabIndices.value) {
-          // 复习模式：跳到下一个生词，或完成句子
+          // 复习/测试模式：跳到下一个生词，或完成句子
           if (!advanceToNextVocabWord()) {
             await finishSentence();
           }
@@ -362,6 +373,9 @@ async function onStart(mode: "practice" | "review" | "test" = "practice", scope?
     hintSet.value = new Set();
     failSet.value = new Set();
     if (mode === "test") testStats.value = { total: 0, pass: 0, fails: [] }; // 测试会话统计重置
+    sessionWordIds.value = new Set(); // 新会话重新累计
+    summaryWords.value = [];
+    sentenceDoneWait.value = false; // T035：整句完成待回车状态重置
     skipNonVocabWords(); // 复习/测试模式：跳到第一个生词
     todayList.value = [];
     finishDone.value = false;
@@ -390,6 +404,39 @@ function openTestScope() {
 function startTest(scope: "all" | "near" | "fail" | "mastered") {
   scopeOpen.value = false;
   onStart("test", scope);
+}
+
+// T035：练习模式完成态点击单词 → 确认加入生词本
+function onWordClick(seg: Seg) {
+  if (practiceMode.value !== "practice" || !sentenceDoneWait.value) return; // 仅练习模式完成态
+  if (seg.type !== "word") return;
+  const t = sentence.value!.tokens[seg.ti!];
+  if (t.is_name === 1) return;
+  if (t.in_vocab) {
+    reportInfo.value = `「${t.word}」已在生词本`;
+    setTimeout(() => (reportInfo.value = ""), 1800);
+    return;
+  }
+  wordConfirm.value = { word: t.word, wordId: t.word_id };
+  wordConfirmOpen.value = true;
+}
+
+// 确认加入生词本
+async function confirmAddWord() {
+  const w = wordConfirm.value;
+  if (!w) return;
+  wordConfirmOpen.value = false;
+  wordConfirm.value = null;
+  try {
+    await api.addVocab(w.wordId);
+    // 本地刷新 token 状态（in_vocab=true）
+    const tok = sentence.value!.tokens.find((t) => t.word_id === w.wordId);
+    if (tok) tok.in_vocab = true;
+    reportInfo.value = `「${w.word}」已加入生词本`;
+    setTimeout(() => (reportInfo.value = ""), 1800);
+  } catch (e) {
+    error.value = (e as Error).message;
+  }
 }
 
 // 到期横幅「查看单词」：拉取到期词并弹窗展示（T031）
@@ -509,6 +556,13 @@ function onKeydown(e: KeyboardEvent) {
     onBackspace();
     return;
   }
+  // T035：练习模式整句完成态回车进入下一句
+  if (e.key === "Enter" && sentenceDoneWait.value) {
+    e.preventDefault();
+    sentenceDoneWait.value = false;
+    finishSentence();
+    return;
+  }
   if (e.key.length === 1) {
     e.preventDefault();
     onChar(e.key);
@@ -605,12 +659,16 @@ onUnmounted(() => {
         <div class="zh">{{ sentence?.zh }}</div>
         <div class="input-card">
           <div class="en" :class="['mode-' + practiceMode, { flash: flashError, 'slide-exit': slideState === 'exit', 'slide-enter': slideState === 'enter' }]">
-            <span v-for="(seg, i) in segments" :key="i" :class="renderSegClass(seg)">
+            <span v-for="(seg, i) in segments" :key="i" :class="renderSegClass(seg)" @click="onWordClick(seg)">
               <template v-if="seg.type === 'word' && isActive(seg)">
                 <span class="typed">{{ typed }}</span><span class="blank">{{ blankRemain(seg) }}</span>
               </template>
               <template v-else>{{ renderWord(seg) }}</template>
             </span>
+          </div>
+          <!-- T035：练习模式整句完成待回车提示 -->
+          <div v-if="sentenceDoneWait" class="done-wait">
+            ✅ 已输入完成，按 <strong>回车</strong> 进入下一句；点击单词可加入生词本
           </div>
           <div class="actions">
             <button :disabled="busy" @click="playSentence">朗读</button>
@@ -623,6 +681,18 @@ onUnmounted(() => {
             <button :disabled="busy" @click="openReport">报告句子有误</button>
             <button class="danger" @click="onFinish">结束</button>
           </div>
+          <!-- T035：点击单词加入生词本确认 -->
+          <div v-if="wordConfirmOpen" class="modal-mask" @click.self="wordConfirmOpen = false">
+            <div class="modal">
+              <h3>加入生词本</h3>
+              <p class="modal-tip">是否将单词 <strong>{{ wordConfirm?.word }}</strong> 加入生词本？<br>加入后该词会出现在复习与测试中。</p>
+              <div class="modal-actions">
+                <button @click="wordConfirmOpen = false">取消</button>
+                <button class="primary" @click="confirmAddWord">确认加入</button>
+              </div>
+            </div>
+          </div>
+
           <!-- 报告描述输入框（T020） -->
           <div v-if="reportOpen" class="modal-mask" @click.self="cancelReport">
             <div class="modal">
@@ -983,6 +1053,25 @@ onUnmounted(() => {
 .fail-words {
   color: #c0392b;
   margin: 0;
+}
+
+/* T035：整句完成待回车提示 */
+.done-wait {
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: #e8f7ee;
+  border: 1px solid #b7e4c7;
+  border-radius: 8px;
+  color: #1d9e54;
+  text-align: center;
+}
+.done-wait strong {
+  font-size: 16px;
+}
+/* T035：完成态单词可点击（hover 提示） */
+.en .word-done,
+.en .hint-done {
+  cursor: default;
 }
 
 /* T029/T031 到期横幅 */

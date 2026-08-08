@@ -99,6 +99,7 @@ export const api = {
   backspace: () => req<{ typed: string }>("POST", "/api/practice/backspace", {}),
   complete: (wordResults: { wordId: number; result: string }[]) =>
     req<{ done: boolean; next?: Sentence }>("POST", "/api/practice/complete", { wordResults }),
+  addVocab: (wordId: number) => req<{ ok: boolean }>("POST", "/api/practice/add-vocab", { wordId }),
   finish: () => req<{ ok: boolean; done: number }>("POST", "/api/practice/finish", {}),
   report: (sentenceId: number, description?: string) =>
     req<{ ok: boolean; reportId: number }>("POST", "/api/practice/report", { sentenceId, description }),

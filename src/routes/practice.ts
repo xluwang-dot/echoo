@@ -138,6 +138,23 @@ export function practiceRouter(db?: DatabaseSync): Router {
     }
   });
 
+  // T035：将当前会话句子的指定词加入生词本（练习模式完成态点击单词）
+  router.post("/add-vocab", requireAuth, (req, res) => {
+    const state = getSession(req.session.userId!);
+    if (!state) {
+      res.status(409).json({ error: "没有进行中的练习" });
+      return;
+    }
+    const wordId = Number(req.body?.wordId);
+    if (!Number.isInteger(wordId)) {
+      res.status(400).json({ error: "wordId 需为整数" });
+      return;
+    }
+    const { sentence } = currentTokens(database, state, req.session.userId!);
+    addVocab(database, req.session.userId!, wordId, sentence.id);
+    res.json({ ok: true });
+  });
+
   // 提示词：当前词入生词本 + 返回词；词浅色提示，仍要求用户再输入一次
   // T028：测试模式禁用提示词（验收性质）
   router.post("/hint", requireAuth, (req, res) => {
