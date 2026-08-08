@@ -79,17 +79,18 @@ const segments = computed(() =>
   sentence.value ? buildSegments(sentence.value.en, sentence.value.tokens) : []
 );
 
-// 复习模式：需默写的词下标列表（in_vocab=true）
+// 复习/测试模式：需默写的词下标列表（in_vocab 且非人名词；B0003 修复：过滤 is_name 防止光标跳到人名词）
 const vocabIndices = computed(() => {
-  if (practiceMode.value !== "review" || !sentence.value) return null;
+  if (practiceMode.value !== "review" && practiceMode.value !== "test") return null;
+  if (!sentence.value) return null;
   return sentence.value.tokens
-    .map((t, i) => (t.in_vocab ? i : -1))
+    .map((t, i) => (t.in_vocab && t.is_name !== 1 ? i : -1))
     .filter((i) => i >= 0);
 });
 
-// 复习模式：跳到下一个需默写的词
+// 复习/测试模式：跳到下一个需默写的词
 function advanceToNextVocabWord() {
-  if (!vocabIndices.value) return false; // 非复习模式
+  if (!vocabIndices.value) return false; // 非复习/测试模式
   const pos = vocabIndices.value.indexOf(wordIdx.value);
   if (pos >= 0 && pos < vocabIndices.value.length - 1) {
     wordIdx.value = vocabIndices.value[pos + 1];
@@ -99,9 +100,10 @@ function advanceToNextVocabWord() {
   return false; // 没有更多生词
 }
 
-// 复习模式：跳过非生词，将 wordIdx 调整到第一个生词
+// 复习/测试模式：跳过非生词/人名，将 wordIdx 调整到第一个生词
 function skipNonVocabWords() {
-  if (practiceMode.value !== "review" || !sentence.value) return;
+  if (practiceMode.value !== "review" && practiceMode.value !== "test") return;
+  if (!sentence.value) return;
   const firstVocab = sentence.value.tokens.findIndex(
     (t) => t.in_vocab && t.is_name !== 1
   );
@@ -111,9 +113,10 @@ function skipNonVocabWords() {
   }
 }
 
-// 复习模式：当前词是否为非生词（需跳过）
+// 复习/测试模式：当前词是否为非生词（需跳过，灰色显示）
 function isSkippable(seg: Seg): boolean {
-  if (practiceMode.value !== "review" || !sentence.value) return false;
+  if (practiceMode.value !== "review" && practiceMode.value !== "test") return false;
+  if (!sentence.value) return false;
   return sentence.value.tokens[seg.ti!].in_vocab === false;
 }
 
@@ -147,8 +150,8 @@ function renderSegClass(seg: Seg): string {
   if (seg.type === "text") return "punct";
   const t = sentence.value!.tokens[seg.ti!];
   if (t.is_name === 1) return "name";
-  // 复习模式：非生词直接显示完成态
-  if (isSkippable(seg)) return "word-done";
+  // 复习/测试模式：非生词灰色显示（不参与默写）
+  if (isSkippable(seg)) return "skipped";
   const hinted = hintSet.value.has(seg.ti!);
   if (seg.ti! < wordIdx.value) return hinted ? "hint-done" : "word-done";
   if (seg.ti === wordIdx.value) return hinted ? "hint-active" : "active";
@@ -523,7 +526,7 @@ onUnmounted(() => {
         </div>
         <div class="zh">{{ sentence?.zh }}</div>
         <div class="input-card">
-          <div class="en" :class="{ flash: flashError, 'slide-exit': slideState === 'exit', 'slide-enter': slideState === 'enter' }">
+          <div class="en" :class="['mode-' + practiceMode, { flash: flashError, 'slide-exit': slideState === 'exit', 'slide-enter': slideState === 'enter' }]">
             <span v-for="(seg, i) in segments" :key="i" :class="renderSegClass(seg)">
               <template v-if="seg.type === 'word' && isActive(seg)">
                 <span class="typed">{{ typed }}</span><span class="blank">{{ blankRemain(seg) }}</span>
@@ -728,6 +731,13 @@ onUnmounted(() => {
 }
 .en .word-done {
   color: #1d9e54;
+}
+/* T030：复习模式拼对词红色（与练习/测试绿色区分）；非生词灰色 */
+.en.mode-review .word-done {
+  color: #c0392b;
+}
+.en .skipped {
+  color: #999;
 }
 .en .hint-done {
   color: #d66;
