@@ -326,6 +326,7 @@ async function finishSentence() {
 
   if (r.done) {
     finishDone.value = true;
+    clearAutoPlay(); // T034
     await loadSummaryWords(); // T033：统计表格数据在 done 渲染前就绪
     phase.value = "done";
   } else {
@@ -339,7 +340,9 @@ async function finishSentence() {
     slideState.value = "enter";
     await new Promise((r) => setTimeout(r, 420));
     slideState.value = "idle";
-    playSentence();
+    // T034：练习模式自动三连播，其余模式播一次
+    if (practiceMode.value === "practice") scheduleAutoPlay();
+    else playSentence();
   }
 }
 
@@ -370,7 +373,9 @@ async function onStart(mode: "practice" | "review" | "test" = "practice", scope?
       elapsed.value = Math.floor((Date.now() - startMs.value) / 1000);
       elapsedText.value = elapsed.value + "s";
     }, 1000);
-    playSentence();
+    // T034：练习模式自动三连播，其余模式播一次
+    if (practiceMode.value === "practice") scheduleAutoPlay();
+    else playSentence();
   } catch (e) {
     error.value = (e as Error).message;
   } finally {
@@ -421,6 +426,7 @@ async function onFinish() {
     // 忽略：会话可能已结束
   }
   if (timerId) clearInterval(timerId);
+  clearAutoPlay(); // T034
   await loadSummaryWords(); // T033：提前结束时也可靠显示统计
   phase.value = "done";
 }
@@ -442,6 +448,31 @@ async function playSentence() {
     await audioEl.play();
   } catch {
     // 音频缺失或未生成时静默（按钮仍可用，后续提示）
+  }
+}
+
+// T034：练习模式自动三连播（进句即播 → 5s → 5s）
+let autoPlayTimer: number | null = null;
+let autoPlayCount = 0;
+const AUTO_PLAY_INTERVAL = 5000;
+const AUTO_PLAY_TIMES = 3;
+
+function scheduleAutoPlay() {
+  if (practiceMode.value !== "practice") return; // 仅练习模式
+  clearAutoPlay();
+  autoPlayCount = 0;
+  playAutoOnce();
+}
+function playAutoOnce() {
+  if (autoPlayCount >= AUTO_PLAY_TIMES) return;
+  autoPlayCount += 1;
+  playSentence();
+  autoPlayTimer = window.setTimeout(playAutoOnce, AUTO_PLAY_INTERVAL);
+}
+function clearAutoPlay() {
+  if (autoPlayTimer) {
+    clearTimeout(autoPlayTimer);
+    autoPlayTimer = null;
   }
 }
 
@@ -503,6 +534,7 @@ onMounted(async () => {
 onUnmounted(() => {
   window.removeEventListener("keydown", onKeydown);
   if (timerId) clearInterval(timerId);
+  clearAutoPlay(); // T034
 });
 </script>
 
@@ -616,9 +648,9 @@ onUnmounted(() => {
       <!-- 完成 -->
       <div v-else class="done">
         <h2>练习完成</h2>
-        <!-- 复习总结表格（T031）：表头=间隔天数，每行一个单词 -->
-        <div v-if="practiceMode === 'review' && summaryWords.length" class="summary-wrap">
-          <h3>本次复习单词间隔状态</h3>
+        <!-- 总结表格（T031/T034）：表头=间隔天数，每行一个单词（复习/练习模式） -->
+        <div v-if="practiceMode !== 'test' && summaryWords.length" class="summary-wrap">
+          <h3>{{ practiceMode === 'review' ? '本次复习单词间隔状态' : '本次练习单词间隔状态' }}</h3>
           <table class="vocab-table">
             <thead>
               <tr><th>单词</th><th v-for="iv in INTERVAL_COLS" :key="iv">{{ iv }}天</th><th>已掌握</th></tr>
