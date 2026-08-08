@@ -928,6 +928,7 @@ onUnmounted(() => {
   text-align: center;
   white-space: pre-wrap;
   word-break: keep-all;
+  overflow-wrap: anywhere; /* T038：超长/无空格粘连句可断行，避免 span 超宽导致居中向左溢出 */
 }
 .en > span {
   display: inline-block;
@@ -1249,10 +1250,10 @@ onUnmounted(() => {
 
 /* ---- 滑动翻页 ---- */
 .slide-exit {
-  animation: slide-out 0.4s ease-in forwards;
+  animation: slide-out 0.4s ease-in; /* T038：去掉 forwards，异常残留时元素仍居中 */
 }
 .slide-enter {
-  animation: slide-in 0.4s ease-out forwards;
+  animation: slide-in 0.4s ease-out;
 }
 @keyframes slide-out {
   0% { transform: translateX(0); opacity: 1; }
