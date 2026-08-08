@@ -46,7 +46,15 @@ const dueWordsModal = ref(false);
 const dueWordsList = ref<VocabStateItem[]>([]);
 // T031：复习会话累计词 + 总结表格
 const sessionWordIds = ref<Set<number>>(new Set());
-const summaryWords = ref<VocabStateItem[]>([]);
+const sessionWordNames = ref<Map<number, string>>(new Map()); // T036：词 id→词名（统计未入本词用）
+interface SummaryRow {
+  wordId: number;
+  word: string;
+  interval: number;
+  status: "learning" | "mastered" | "new"; // new=未入本（练习模式）
+  review_count: number;
+}
+const summaryWords = ref<SummaryRow[]>([]);
 
 // T035：练习模式整句完成待回车 + 点击单词入本
 const sentenceDoneWait = ref(false);
@@ -68,12 +76,25 @@ watch(phase, async (p) => {
   }
 });
 
-// T033：同步拉取统计表格数据（不依赖 watch 异步时序）
+// T033/T036：同步拉取统计表格数据（不依赖 watch 异步时序；练习模式合并未入本词）
 async function loadSummaryWords() {
   if (practiceMode.value === "test" || sessionWordIds.value.size === 0) return;
   try {
     const r = await api.vocabState([...sessionWordIds.value]);
-    summaryWords.value = r.words;
+    const stateMap = new Map(r.words.map((w) => [w.wordId, w]));
+    // T036：无 user_vocab 记录的词（练习未入本）→ 状态 new
+    const all: SummaryRow[] = [...sessionWordIds.value].map((wordId) => {
+      const s = stateMap.get(wordId);
+      if (s) return s as SummaryRow;
+      return {
+        wordId,
+        word: sessionWordNames.value.get(wordId) ?? `#${wordId}`,
+        interval: 0,
+        status: "new" as const,
+        review_count: 0,
+      };
+    });
+    summaryWords.value = all;
   } catch {
     summaryWords.value = [];
   }
@@ -320,6 +341,12 @@ async function finishSentence() {
       }
     }
   }
+  // 复习/练习总结（T031/T036）：累计本次会话涉及词（词名一并记录，供未入本统计）
+  for (const w of wordResults) {
+    sessionWordIds.value.add(w.wordId);
+    const tok = tokens.find((t) => t.word_id === w.wordId);
+    if (tok) sessionWordNames.value.set(w.wordId, tok.word);
+  }
   const ms = Date.now() - startMs.value;
   const r = await api.complete(wordResults);
   todayList.value.push({ en: sentence.value!.en, ms });
@@ -374,6 +401,7 @@ async function onStart(mode: "practice" | "review" | "test" = "practice", scope?
     failSet.value = new Set();
     if (mode === "test") testStats.value = { total: 0, pass: 0, fails: [] }; // 测试会话统计重置
     sessionWordIds.value = new Set(); // 新会话重新累计
+    sessionWordNames.value = new Map(); // T036
     summaryWords.value = [];
     sentenceDoneWait.value = false; // T035：整句完成待回车状态重置
     skipNonVocabWords(); // 复习/测试模式：跳到第一个生词
@@ -685,7 +713,7 @@ onUnmounted(() => {
           <div v-if="wordConfirmOpen" class="modal-mask" @click.self="wordConfirmOpen = false">
             <div class="modal">
               <h3>加入生词本</h3>
-              <p class="modal-tip">是否将单词 <strong>{{ wordConfirm?.word }}</strong> 加入生词本？<br>加入后该词会出现在复习与测试中。</p>
+              <p class="modal-tip">是否将单词 <span class="highlight-word">{{ wordConfirm?.word }}</span> 加入生词本？<br>加入后该词会出现在复习与测试中。</p>
               <div class="modal-actions">
                 <button @click="wordConfirmOpen = false">取消</button>
                 <button class="primary" @click="confirmAddWord">确认加入</button>
@@ -717,17 +745,18 @@ onUnmounted(() => {
 
       <!-- 完成 -->
       <div v-else class="done">
-        <h2>练习完成</h2>
-        <!-- 总结表格（T031/T034）：表头=间隔天数，每行一个单词（复习/练习模式） -->
+        <h2>{{ practiceMode === 'review' ? '复习完成' : practiceMode === 'test' ? '测试完成' : '练习完成' }}</h2>
+        <!-- 总结表格（T031/T034/T036）：表头=间隔天数，每行一个单词（复习/练习模式） -->
         <div v-if="practiceMode !== 'test' && summaryWords.length" class="summary-wrap">
-          <h3>{{ practiceMode === 'review' ? '本次复习单词间隔状态' : '本次练习单词间隔状态' }}</h3>
+          <h3>{{ practiceMode === 'review' ? '本次复习单词间隔状态' : '本次练习单词状态' }}</h3>
           <table class="vocab-table">
             <thead>
-              <tr><th>单词</th><th v-for="iv in INTERVAL_COLS" :key="iv">{{ iv }}天</th><th>已掌握</th></tr>
+              <tr><th>单词</th><th>状态</th><th v-for="iv in INTERVAL_COLS" :key="iv">{{ iv }}天</th><th>已掌握</th></tr>
             </thead>
             <tbody>
               <tr v-for="w in summaryWords" :key="w.wordId">
                 <td class="word">{{ w.word }}</td>
+                <td :class="'status ' + w.status">{{ w.status === 'new' ? '未入本' : w.status === 'mastered' ? '已掌握' : '学习中' }}</td>
                 <td v-for="iv in INTERVAL_COLS" :key="iv" :class="{ on: w.status === 'learning' && w.interval === iv }">
                   {{ w.status === 'learning' && w.interval === iv ? "✓" : "" }}
                 </td>
@@ -776,11 +805,12 @@ onUnmounted(() => {
           <div class="modal-scroll">
             <table class="vocab-table">
               <thead>
-                <tr><th>单词</th><th v-for="iv in INTERVAL_COLS" :key="iv">{{ iv }}天</th><th>已掌握</th></tr>
+                <tr><th>单词</th><th>状态</th><th v-for="iv in INTERVAL_COLS" :key="iv">{{ iv }}天</th><th>已掌握</th></tr>
               </thead>
               <tbody>
                 <tr v-for="w in dueWordsList" :key="w.wordId">
                   <td class="word">{{ w.word }}</td>
+                  <td :class="'status ' + w.status">{{ w.status === 'mastered' ? '已掌握' : '学习中' }}</td>
                   <td v-for="iv in INTERVAL_COLS" :key="iv" :class="{ on: w.status === 'learning' && w.interval === iv }">
                     {{ w.status === 'learning' && w.interval === iv ? "✓" : "" }}
                   </td>
@@ -1131,6 +1161,26 @@ onUnmounted(() => {
   max-height: 60vh;
   overflow: auto;
   margin: 12px 0;
+}
+
+/* T036：状态列配色 */
+.vocab-table td.status.new {
+  color: #999;
+}
+.vocab-table td.status.learning {
+  color: #1d9e54;
+}
+.vocab-table td.status.mastered {
+  color: #d46b08;
+  font-weight: 700;
+}
+/* T036：加入生词本弹窗突出单词 */
+.highlight-word {
+  font-size: 24px;
+  font-weight: 800;
+  color: #c0392b;
+  letter-spacing: 1px;
+  margin: 0 4px;
 }
 .done {
   margin: auto;
