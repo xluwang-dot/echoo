@@ -486,3 +486,85 @@ describe("T029 到期横幅与偏好（due-count + preferences）", () => {
     expect(me.body.preferences).toEqual({ login_force_review: true });
   });
 });
+
+describe("T031 单词状态聚合（vocab-state + due-words）", () => {
+  const TEST_DB5 = path.join(os.tmpdir(), "word_typer_test_t031.db");
+  let db5: DatabaseSync;
+  let app5: express.Express;
+  let agent5: request.Agent;
+  let u5: { id: number };
+  let w5foo: number;
+  let w5bar: number;
+  let s5a: number;
+  let s5b: number;
+
+  beforeAll(async () => {
+    db5 = freshDb();
+    db5.prepare("INSERT INTO users (username, password_hash) VALUES (?, ?)").run("erin", hashPassword("e123456"));
+    u5 = db5.prepare("SELECT id FROM users WHERE username='erin'").get() as { id: number };
+    w5foo = db5.prepare("INSERT INTO words (word) VALUES (?)").run("foo").lastInsertRowid as number;
+    w5bar = db5.prepare("INSERT INTO words (word) VALUES (?)").run("bar").lastInsertRowid as number;
+    s5a = db5.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("foo a.", "foo a。").lastInsertRowid as number;
+    s5b = db5.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("bar b.", "bar b。").lastInsertRowid as number;
+    db5.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(s5a, w5foo, 0, 0);
+    db5.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(s5b, w5bar, 0, 0);
+    // foo：两个词句对（interval 3 / 16）→ 聚合取 16；bar：mastered
+    db5.prepare("INSERT INTO user_vocab (user_id, word_id, sentence_id, created_at, interval, review_count, next_review, status, fail_count) VALUES (?,?,?,?,3,2,?,'learning',0)").run(u5.id, w5foo, s5a, "2026-08-06", "2026-08-07");
+    db5.prepare("INSERT INTO user_vocab (user_id, word_id, sentence_id, created_at, interval, review_count, next_review, status, fail_count) VALUES (?,?,?,?,16,4,?,'learning',0)").run(u5.id, w5foo, s5b, "2026-08-06", "2026-08-07");
+    db5.prepare("INSERT INTO user_vocab (user_id, word_id, sentence_id, created_at, interval, review_count, next_review, status, fail_count) VALUES (?,?,?,?,35,5,?,'mastered',0)").run(u5.id, w5bar, s5a, "2026-08-06", "2026-08-07");
+
+    app5 = express();
+    app5.use(express.json());
+    app5.use(configureSession());
+    app5.use("/api/auth", authRouter(db5));
+    app5.use("/api/practice", practiceRouter(db5));
+    agent5 = request.agent(app5);
+    const r = await agent5.post("/api/auth/login").send({ username: "erin", password: "e123456" });
+    expect(r.status).toBe(200);
+  });
+  afterAll(() => {
+    db5.close();
+    if (fs.existsSync(TEST_DB5)) fs.unlinkSync(TEST_DB5);
+  });
+  beforeEach(() => {
+    resetSessionStore();
+  });
+
+  it("vocab-state：同词多词句对 interval 取最大、mastered 优先", async () => {
+    const res = await agent5.post("/api/practice/vocab-state").send({ wordIds: [w5foo, w5bar] });
+    expect(res.status).toBe(200);
+    const words = res.body.words as { wordId: number; word: string; interval: number; status: string }[];
+    const foo = words.find((x) => x.wordId === w5foo)!;
+    const bar = words.find((x) => x.wordId === w5bar)!;
+    expect(foo.interval).toBe(16);
+    expect(foo.status).toBe("learning");
+    expect(bar.interval).toBe(35);
+    expect(bar.status).toBe("mastered");
+  });
+
+  it("vocab-state：空数组返回空", async () => {
+    const res = await agent5.post("/api/practice/vocab-state").send({ wordIds: [] });
+    expect(res.body.words).toEqual([]);
+  });
+
+  it("vocab-state：非法参数 400", async () => {
+    const res = await agent5.post("/api/practice/vocab-state").send({ wordIds: "x" });
+    expect(res.status).toBe(400);
+  });
+
+  it("due-words：到期词按词聚合返回", async () => {
+    // 把 foo 的一个词句对改为昨日到期
+    db5.prepare("UPDATE user_vocab SET next_review=? WHERE user_id=? AND word_id=? AND sentence_id=?").run(new Date(Date.now() - 86400000).toISOString().slice(0, 10), u5.id, w5foo, s5b);
+    const res = await agent5.get("/api/practice/due-words");
+    expect(res.status).toBe(200);
+    const words = res.body.words as { wordId: number; word: string }[];
+    expect(words.map((x) => x.wordId)).toContain(w5foo);
+    expect(words.map((x) => x.wordId)).not.toContain(w5bar); // mastered 不计
+  });
+
+  it("due-words：无到期词返回空数组", async () => {
+    db5.prepare("UPDATE user_vocab SET next_review=? WHERE user_id=?").run("2099-01-01", u5.id);
+    const res = await agent5.get("/api/practice/due-words");
+    expect(res.body.words).toEqual([]);
+  });
+});

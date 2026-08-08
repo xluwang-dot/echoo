@@ -4,7 +4,7 @@ import { Router, Request, Response, NextFunction } from "express";
 import type { DatabaseSync } from "node:sqlite";
 import { getDb } from "../db.js";
 import { requireAuth } from "./auth.js";
-import { getSentenceWithTokens, completeSentence, getDueCount } from "../practice.js";
+import { getSentenceWithTokens, completeSentence, getDueCount, aggregateVocabState, getDueWords } from "../practice.js";
 import { wordState, sentenceDone } from "../checker.js";
 import { createSession, getSession, clearSession, elapsedMs } from "../practiceSession.js";
 import { finishSession as persistSession } from "../practice.js";
@@ -222,6 +222,21 @@ export function practiceRouter(db?: DatabaseSync): Router {
   // 到期复习数量（T029，§4.1 登录到期横幅）
   router.get("/due-count", requireAuth, (req, res) => {
     res.json({ due: getDueCount(database, req.session.userId!) });
+  });
+
+  // 当前到期词聚合（T031：横幅「查看单词」弹窗）
+  router.get("/due-words", requireAuth, (req, res) => {
+    res.json({ words: getDueWords(database, req.session.userId!) });
+  });
+
+  // 指定词的聚合状态（T031：复习总结表格）
+  router.post("/vocab-state", requireAuth, (req, res) => {
+    const wordIds = req.body?.wordIds;
+    if (!Array.isArray(wordIds) || !wordIds.every((n: unknown) => Number.isInteger(n))) {
+      res.status(400).json({ error: "wordIds 需为整数数组" });
+      return;
+    }
+    res.json({ words: aggregateVocabState(database, req.session.userId!, wordIds as number[]) });
   });
 
   // 报告句子有误（§3.6）：写入待处理队列（sentence_reports，status=pending）

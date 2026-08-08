@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick } from "vue";
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from "vue";
 import { useRouter } from "vue-router";
-import { api, type Sentence, type Token } from "../api";
+import { api, type Sentence, type Token, type VocabStateItem } from "../api";
 
 const router = useRouter();
 
@@ -40,6 +40,36 @@ const finishDone = ref(false);
 const dueBanner = ref(0); // 到期复习数量（T029）
 const forceReview = ref(false); // 偏好：登录后强制进入复习
 const bannerLoaded = ref(false);
+
+// T031：到期横幅「查看单词」弹窗
+const dueWordsModal = ref(false);
+const dueWordsList = ref<VocabStateItem[]>([]);
+// T031：复习会话累计词 + 总结表格
+const sessionWordIds = ref<Set<number>>(new Set());
+const summaryWords = ref<VocabStateItem[]>([]);
+
+// 间隔表格列（记忆曲线：1→3→7→16→35 天）
+const INTERVAL_COLS = [1, 3, 7, 16, 35];
+
+// T031：回首页刷新到期数量（due=0 横幅自动消失）；复习结束拉总结表格
+watch(phase, async (p) => {
+  if (p === "menu" && bannerLoaded.value) {
+    try {
+      const d = await api.dueCount();
+      dueBanner.value = d.due;
+    } catch {
+      // 静默
+    }
+  }
+  if (p === "done" && practiceMode.value === "review" && sessionWordIds.value.size > 0) {
+    try {
+      const r = await api.vocabState([...sessionWordIds.value]);
+      summaryWords.value = r.words;
+    } catch {
+      summaryWords.value = [];
+    }
+  }
+});
 
 // 特效状态
 const slideState = ref<"idle" | "exit" | "enter">("idle");
@@ -353,6 +383,17 @@ function startTest(scope: "all" | "near" | "fail" | "mastered") {
   onStart("test", scope);
 }
 
+// 到期横幅「查看单词」：拉取到期词并弹窗展示（T031）
+async function openDueWords() {
+  try {
+    const r = await api.dueWords();
+    dueWordsList.value = r.words;
+    dueWordsModal.value = true;
+  } catch (e) {
+    error.value = (e as Error).message;
+  }
+}
+
 // 测试模式「不会」：标记当前词 test_fail，跳到下一词（无提示，§3.3）
 function onGiveUp() {
   if (phase.value !== "running" || busy.value) return;
@@ -477,8 +518,8 @@ onUnmounted(() => {
       <div v-if="phase === 'menu'" class="menu">
         <div v-if="bannerLoaded && dueBanner > 0" class="due-banner">
           <span>📢 有 <strong>{{ dueBanner }}</strong> 个到期词待复习（按记忆曲线）</span>
-          <button class="primary" @click="onStart('review')">开始复习</button>
-          <button v-if="!forceReview" class="plain" @click="dueBanner = 0">跳过</button>
+          <button class="danger" @click="onStart('review')">立即复习</button>
+          <button class="plain" @click="openDueWords">查看单词</button>
         </div>
         <div class="menu-cards">
           <div class="menu-card" @click="onStart('practice')">
@@ -570,6 +611,24 @@ onUnmounted(() => {
       <!-- 完成 -->
       <div v-else class="done">
         <h2>练习完成</h2>
+        <!-- 复习总结表格（T031）：表头=间隔天数，每行一个单词 -->
+        <div v-if="practiceMode === 'review' && summaryWords.length" class="summary-wrap">
+          <h3>本次复习单词间隔状态</h3>
+          <table class="vocab-table">
+            <thead>
+              <tr><th>单词</th><th v-for="iv in INTERVAL_COLS" :key="iv">{{ iv }}天</th><th>已掌握</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="w in summaryWords" :key="w.wordId">
+                <td class="word">{{ w.word }}</td>
+                <td v-for="iv in INTERVAL_COLS" :key="iv" :class="{ on: w.status === 'learning' && w.interval === iv }">
+                  {{ w.status === 'learning' && w.interval === iv ? "✓" : "" }}
+                </td>
+                <td :class="{ on: w.status === 'mastered' }">{{ w.status === 'mastered' ? "✓" : "" }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
         <div v-if="practiceMode === 'test'" class="stats">
           <div class="stat">
             <span class="num">{{ testStats.pass }}/{{ testStats.total }}</span>
@@ -600,6 +659,32 @@ onUnmounted(() => {
         <div class="done-actions">
           <button @click="phase = 'menu'; sentence = null">返回首页</button>
           <button class="primary" @click="onStart(practiceMode)">再来一轮</button>
+        </div>
+      </div>
+
+      <!-- 到期词查看（T031） -->
+      <div v-if="dueWordsModal" class="modal-mask" @click.self="dueWordsModal = false">
+        <div class="modal">
+          <h3>到期词（{{ dueWordsList.length }} 个）</h3>
+          <div class="modal-scroll">
+            <table class="vocab-table">
+              <thead>
+                <tr><th>单词</th><th v-for="iv in INTERVAL_COLS" :key="iv">{{ iv }}天</th><th>已掌握</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="w in dueWordsList" :key="w.wordId">
+                  <td class="word">{{ w.word }}</td>
+                  <td v-for="iv in INTERVAL_COLS" :key="iv" :class="{ on: w.status === 'learning' && w.interval === iv }">
+                    {{ w.status === 'learning' && w.interval === iv ? "✓" : "" }}
+                  </td>
+                  <td :class="{ on: w.status === 'mastered' }">{{ w.status === 'mastered' ? "✓" : "" }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="modal-actions">
+            <button @click="dueWordsModal = false">关闭</button>
+          </div>
         </div>
       </div>
     </div>
@@ -863,16 +948,17 @@ onUnmounted(() => {
   margin: 0;
 }
 
-/* T029 到期横幅 */
+/* T029/T031 到期横幅 */
 .due-banner {
   display: flex;
   align-items: center;
   gap: 12px;
-  background: #fff7e6;
-  border: 1px solid #ffd591;
-  border-radius: 10px;
-  padding: 12px 16px;
+  background: linear-gradient(135deg, #fff3e0, #ffe0b2);
+  border: 2px solid #ff9800;
+  border-radius: 12px;
+  padding: 14px 18px;
   margin-bottom: 18px;
+  box-shadow: 0 2px 8px rgba(255, 152, 0, 0.25);
 }
 .due-banner span {
   flex: 1;
@@ -884,6 +970,41 @@ onUnmounted(() => {
 .due-banner button.plain {
   background: transparent;
   border: 1px solid #ccc;
+}
+
+/* T031 总结表格 / 到期词弹窗表格 */
+.summary-wrap {
+  margin-top: 16px;
+  text-align: center;
+}
+.summary-wrap h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+.vocab-table {
+  margin: 0 auto;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.vocab-table th,
+.vocab-table td {
+  border: 1px solid #ddd;
+  padding: 6px 10px;
+  text-align: center;
+  min-width: 44px;
+}
+.vocab-table td.word {
+  font-weight: 700;
+}
+.vocab-table td.on {
+  color: #d46b08;
+  font-weight: 700;
+  background: #fff7e6;
+}
+.modal-scroll {
+  max-height: 60vh;
+  overflow: auto;
+  margin: 12px 0;
 }
 .done {
   margin: auto;

@@ -42,6 +42,14 @@ export interface VocabStats {
   sentenceCount: number;
 }
 
+export interface VocabStateItem {
+  wordId: number;
+  word: string;
+  interval: number;
+  status: "learning" | "mastered";
+  review_count: number;
+}
+
 // 通用请求，带 session cookie
 async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
@@ -81,6 +89,8 @@ export const api = {
     req<{ id: number; username: string; nickname: string; preferences: Record<string, unknown> }>("POST", "/api/auth/preferences", preferences),
 
   dueCount: () => req<{ due: number }>("GET", "/api/practice/due-count"),
+  dueWords: () => req<{ words: VocabStateItem[] }>("GET", "/api/practice/due-words"),
+  vocabState: (wordIds: number[]) => req<{ words: VocabStateItem[] }>("POST", "/api/practice/vocab-state", { wordIds }),
 
   start: (targetCount: number, mode?: "practice" | "review" | "test", scope?: string) =>
     req<StartResult>("POST", "/api/practice/start", { targetCount, mode, scope }),

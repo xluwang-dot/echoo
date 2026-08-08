@@ -102,6 +102,71 @@ export function getDueCount(db: DatabaseSync, userId: number): number {
   return row.c;
 }
 
+// ---------- 单词状态聚合（T031：总结表格/查看单词弹窗）----------
+export interface VocabState {
+  wordId: number;
+  word: string;
+  interval: number;
+  status: "learning" | "mastered";
+  review_count: number;
+}
+
+interface VocabRow {
+  wordId: number;
+  word: string;
+  interval: number;
+  status: string;
+  review_count: number;
+}
+
+// 同词多词句对聚合：interval 取最大、任一 mastered 则 status=mastered、review_count 取最大
+function aggregateVocabRows(rows: VocabRow[]): VocabState[] {
+  const map = new Map<number, VocabState>();
+  for (const r of rows) {
+    const cur = map.get(r.wordId);
+    if (!cur) {
+      map.set(r.wordId, {
+        wordId: r.wordId,
+        word: r.word,
+        interval: r.interval,
+        status: r.status === "mastered" ? "mastered" : "learning",
+        review_count: r.review_count,
+      });
+    } else {
+      cur.interval = Math.max(cur.interval, r.interval);
+      if (r.status === "mastered") cur.status = "mastered";
+      cur.review_count = Math.max(cur.review_count, r.review_count);
+    }
+  }
+  return [...map.values()];
+}
+
+// 指定词的聚合状态（复习总结表格）
+export function aggregateVocabState(db: DatabaseSync, userId: number, wordIds: number[]): VocabState[] {
+  if (wordIds.length === 0) return [];
+  const marks = wordIds.map(() => "?").join(",");
+  const rows = db
+    .prepare(
+      `SELECT w.id AS wordId, w.word, v.interval, v.status, v.review_count
+       FROM user_vocab v JOIN words w ON w.id = v.word_id
+       WHERE v.user_id = ? AND v.word_id IN (${marks})`
+    )
+    .all(userId, ...wordIds) as unknown as VocabRow[];
+  return aggregateVocabRows(rows);
+}
+
+// 当前到期词聚合（查看单词弹窗）：learning 且 next_review ≤ 今日
+export function getDueWords(db: DatabaseSync, userId: number): VocabState[] {
+  const rows = db
+    .prepare(
+      `SELECT w.id AS wordId, w.word, v.interval, v.status, v.review_count
+       FROM user_vocab v JOIN words w ON w.id = v.word_id
+       WHERE v.user_id = ? AND v.status='learning' AND v.next_review IS NOT NULL AND v.next_review <= ?`
+    )
+    .all(userId, todayStr()) as unknown as VocabRow[];
+  return aggregateVocabRows(rows);
+}
+
 // ---------- 测试模式（T028，需求 §3.3 测试模式）----------
 export type TestScope = "all" | "near" | "fail" | "mastered";
 
