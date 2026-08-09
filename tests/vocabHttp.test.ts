@@ -107,3 +107,44 @@ describe("T013 vocab HTTP API", () => {
     expect(r.status).toBe(400);
   });
 });
+
+describe("T046 已掌握词墙（GET /api/vocab/mastered）", () => {
+  const TEST_DB11 = path.join(os.tmpdir(), "word_typer_test_t046.db");
+  let db11: DatabaseSync;
+  let app11: express.Express;
+  let agent11: request.Agent;
+
+  beforeAll(async () => {
+    db11 = freshDb();
+    db11.prepare("INSERT INTO users (username, password_hash) VALUES (?, ?)").run("kate", hashPassword("k123456"));
+    const uid = db11.prepare("SELECT id FROM users WHERE username='kate'").get() as { id: number };
+    // 一个 mastered 词句对 + 一个 learning 词句对
+    const s1 = db11.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("foo bar.", "T046a。").lastInsertRowid as number;
+    const s2 = db11.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("baz qux.", "T046b。").lastInsertRowid as number;
+    const w1 = db11.prepare("INSERT INTO words (word) VALUES (?)").run("foo").lastInsertRowid as number;
+    const w2 = db11.prepare("INSERT INTO words (word) VALUES (?)").run("baz").lastInsertRowid as number;
+    db11.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(s1, w1, 0, 0);
+    db11.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(s2, w2, 0, 0);
+    db11.prepare("INSERT INTO user_vocab (user_id, word_id, sentence_id, created_at, interval, review_count, next_review, status) VALUES (?,?,?,?,35,5,?,'mastered')").run(uid.id, w1, s1, "2026-08-06", "2026-08-07");
+    db11.prepare("INSERT INTO user_vocab (user_id, word_id, sentence_id, created_at, interval, review_count, next_review, status) VALUES (?,?,?,?,1,0,?,'learning')").run(uid.id, w2, s2, "2026-08-06", "2026-08-07");
+    app11 = express();
+    app11.use(express.json());
+    app11.use(configureSession());
+    app11.use("/api/auth", authRouter(db11));
+    app11.use("/api/vocab", vocabRouter(db11));
+    agent11 = request.agent(app11);
+    const r = await agent11.post("/api/auth/login").send({ username: "kate", password: "k123456" });
+    expect(r.status).toBe(200);
+  });
+  afterAll(() => {
+    db11.close();
+    if (fs.existsSync(TEST_DB11)) fs.unlinkSync(TEST_DB11);
+  });
+
+  it("mastered 接口：只返回已掌握词句对", async () => {
+    const res = await agent11.get("/api/vocab/mastered");
+    expect(res.status).toBe(200);
+    expect(res.body.vocab.length).toBe(1);
+    expect(res.body.vocab[0].word).toBe("foo");
+  });
+});

@@ -5,7 +5,9 @@ import { api, type VocabEntry, type VocabStats } from "../api";
 
 const router = useRouter();
 const vocab = ref<VocabEntry[]>([]);
+const mastered = ref<VocabEntry[]>([]); // T046：已掌握词句对（词墙）
 const stats = ref<VocabStats>({ vocabCount: 0, masteredCount: 0, sentenceCount: 0 });
+const tab = ref<"vocab" | "mastered">("vocab"); // T046：生词本 / 已掌握词墙
 const loading = ref(true);
 const error = ref("");
 
@@ -13,9 +15,10 @@ async function loadData() {
   loading.value = true;
   error.value = "";
   try {
-    const [v, s] = await Promise.all([api.getVocab(), api.getVocabStats()]);
+    const [v, s, m] = await Promise.all([api.getVocab(), api.getVocabStats(), api.getMasteredVocab()]);
     vocab.value = v.vocab;
     stats.value = s;
+    mastered.value = m.vocab;
   } catch (e) {
     error.value = (e as Error).message;
   } finally {
@@ -58,9 +61,29 @@ onMounted(loadData);
       </div>
     </div>
 
+    <!-- T046：tab 切换 -->
+    <div class="tabs">
+      <button :class="{ active: tab === 'vocab' }" @click="tab = 'vocab'">生词本（{{ stats.vocabCount }}）</button>
+      <button :class="{ active: tab === 'mastered' }" @click="tab = 'mastered'">已掌握（{{ stats.masteredCount }}）</button>
+    </div>
+
     <p v-if="error" class="error">{{ error }}</p>
 
     <div v-if="loading" class="empty">加载中…</div>
+
+    <!-- 已掌握词墙（T046） -->
+    <div v-else-if="tab === 'mastered'" class="mastered-wall">
+      <div v-if="mastered.length === 0" class="empty">
+        <p>还没有已掌握的词</p>
+        <p class="hint">5 次到期复习成功 → 测试验收通过 → 点亮词墙</p>
+      </div>
+      <div v-else class="wall-grid">
+        <div v-for="item in mastered" :key="item.word_id + '-' + item.sentence_id" class="wall-card">
+          <div class="wall-word">🏆 {{ item.word }}</div>
+          <div class="wall-sentence">{{ item.en }}</div>
+        </div>
+      </div>
+    </div>
 
     <div v-else-if="vocab.length === 0" class="empty">
       <p>生词本为空</p>
@@ -150,6 +173,53 @@ onMounted(loadData);
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+/* T046：tab 与词墙 */
+.tabs {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.tabs button {
+  flex: 1;
+  padding: 10px;
+  border: 1px solid #dde2ea;
+  border-radius: 8px;
+  background: #fff;
+  color: #6b7382;
+  font-size: 14px;
+  cursor: pointer;
+}
+.tabs button.active {
+  border-color: #3b6ef6;
+  color: #3b6ef6;
+  font-weight: 700;
+  background: #eef4ff;
+}
+.wall-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+.wall-card {
+  background: linear-gradient(135deg, #fffbe6, #fff3c4);
+  border: 1px solid #ffd700;
+  border-radius: 12px;
+  padding: 14px;
+  text-align: center;
+}
+.wall-word {
+  font-size: 20px;
+  font-weight: 800;
+  color: #d48806;
+}
+.wall-sentence {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #6b7382;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .vocab-item {
   display: flex;

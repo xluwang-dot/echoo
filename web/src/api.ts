@@ -116,6 +116,7 @@ export const api = {
 
   // 生词本
   getVocab: () => req<{ vocab: VocabEntry[]; count: number }>("GET", "/api/vocab"),
+  getMasteredVocab: () => req<{ vocab: VocabEntry[]; count: number }>("GET", "/api/vocab/mastered"), // T046
   getVocabStats: () => req<VocabStats>("GET", "/api/vocab/stats"),
   deleteVocab: (wordId: number, sentenceId: number) =>
     reqDelete<{ ok: boolean }>(`/api/vocab/${wordId}/${sentenceId}`),

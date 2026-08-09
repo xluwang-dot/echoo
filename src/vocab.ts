@@ -74,3 +74,17 @@ export function getMasteredCount(db: DatabaseSync, userId: number): number {
     .get(userId) as { c: number };
   return r.c;
 }
+// T046：已掌握词句对（掌握词墙展示）
+export function getMasteredVocab(db: DatabaseSync, userId: number): VocabRow[] {
+  return db
+    .prepare(
+      `SELECT uv.user_id, uv.word_id, uv.sentence_id, uv.created_at,
+              w.word, s.en, s.zh
+       FROM user_vocab uv
+       JOIN words w ON w.id = uv.word_id
+       JOIN sentences s ON s.id = uv.sentence_id
+       WHERE uv.user_id = ? AND uv.status = 'mastered'
+       ORDER BY uv.created_at DESC, uv.word_id`
+    )
+    .all(userId) as unknown as VocabRow[];
+}

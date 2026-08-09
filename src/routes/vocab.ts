@@ -4,7 +4,7 @@ import { Router } from "express";
 import type { DatabaseSync } from "node:sqlite";
 import { getDb } from "../db.js";
 import { requireAuth } from "./auth.js";
-import { getUserVocab, removeVocab, getMasteredCount } from "../vocab.js";
+import { getUserVocab, removeVocab, getMasteredCount, getMasteredVocab } from "../vocab.js";
 
 export function vocabRouter(db?: DatabaseSync): Router {
   const router = Router();
@@ -26,6 +26,12 @@ export function vocabRouter(db?: DatabaseSync): Router {
       masteredCount,
       sentenceCount: sentenceIds.size,
     });
+  });
+
+  // GET /mastered — 已掌握词句对（T046 掌握词墙）
+  router.get("/mastered", requireAuth, (req, res) => {
+    const vocab = getMasteredVocab(database, req.session.userId!);
+    res.json({ vocab, count: vocab.length });
   });
 
   // DELETE /:wordId/:sentenceId — 删除单条词句对
