@@ -869,6 +869,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   justify-content: center;
+  align-items: center; /* T042：input-card(fit-content) 水平居中，短句不再靠左 */
   transform: translateY(-12%);
 }
 .input-card {
