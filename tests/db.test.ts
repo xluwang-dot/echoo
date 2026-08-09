@@ -137,3 +137,40 @@ describe("T005 schema", () => {
     expect(vc2).toContain("interval");
   });
 });
+
+  it("迁移：旧版 words/sentences 补分级与语音字段（T047a）", () => {
+    // 模拟 T047 之前旧库：words 无 level/meaning/phonetic/audio_path，sentences 无 level
+    const db = openDb();
+    db.exec(`CREATE TABLE words (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      word TEXT NOT NULL UNIQUE,
+      freq INTEGER DEFAULT 0,
+      is_name INTEGER DEFAULT 0,
+      years TEXT
+    )`);
+    db.exec(`CREATE TABLE sentences (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      en TEXT NOT NULL UNIQUE,
+      zh TEXT NOT NULL,
+      round TEXT, topic TEXT, section TEXT, source TEXT
+    )`);
+    db.close();
+    resetDb(TEST_DB);
+    const wcols = (
+      new DatabaseSync(TEST_DB).prepare("PRAGMA table_info(words)").all() as { name: string }[]
+    ).map((r) => r.name);
+    expect(wcols).toContain("level");
+    expect(wcols).toContain("meaning");
+    expect(wcols).toContain("phonetic");
+    expect(wcols).toContain("audio_path");
+    const scols = (
+      new DatabaseSync(TEST_DB).prepare("PRAGMA table_info(sentences)").all() as { name: string }[]
+    ).map((r) => r.name);
+    expect(scols).toContain("level");
+    // 幂等：再次 initDb 不报错且列仍在
+    resetDb(TEST_DB);
+    const again = (
+      new DatabaseSync(TEST_DB).prepare("PRAGMA table_info(words)").all() as { name: string }[]
+    ).map((r) => r.name);
+    expect(again).toContain("level");
+  });

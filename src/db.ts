@@ -27,6 +27,12 @@ const MIGRATIONS: [string, string, string][] = [
   ["user_vocab", "status", "TEXT DEFAULT 'learning'"],
   ["user_vocab", "fail_count", "INTEGER DEFAULT 0"],
   ["practice_sessions", "mode", "TEXT DEFAULT 'practice'"],
+  // T047a：内容分级与词语音字段
+  ["words", "level", "INTEGER DEFAULT 5"],
+  ["words", "meaning", "TEXT"],
+  ["words", "phonetic", "TEXT"],
+  ["words", "audio_path", "TEXT"],
+  ["sentences", "level", "INTEGER"],
 ];
 
 function migrate(db: DatabaseSync): void {
