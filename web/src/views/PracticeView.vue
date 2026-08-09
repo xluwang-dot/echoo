@@ -215,7 +215,6 @@ async function onChar(ch: string) {
           // T035：练习模式整句完成后等待回车，不自动切句；复习/测试模式自动推进
           if (practiceMode.value === "practice") {
             sentenceDoneWait.value = true;
-            clearAutoPlay();
           } else {
             await finishSentence();
           }
@@ -344,7 +343,6 @@ async function finishSentence() {
   if (r.done) {
     finishDone.value = true;
     if (timerId) clearInterval(timerId); // T037：统计页停止计时
-    clearAutoPlay(); // T034
     await loadSummaryWords(); // T033：统计表格数据在 done 渲染前就绪
     phase.value = "done";
   } else {
@@ -358,9 +356,8 @@ async function finishSentence() {
     slideState.value = "enter";
     await new Promise((r) => setTimeout(r, 420));
     slideState.value = "idle";
-    // T034：练习模式自动三连播，其余模式播一次
-    if (practiceMode.value === "practice") scheduleAutoPlay();
-    else playSentence();
+    // 播放整句音频（T041：单次播放）
+    playSentence();
   }
 }
 
@@ -395,9 +392,8 @@ async function onStart(mode: "practice" | "review" | "test" = "practice", scope?
       elapsed.value = Math.floor((Date.now() - startMs.value) / 1000);
       elapsedText.value = elapsed.value + "s";
     }, 1000);
-    // T034：练习模式自动三连播，其余模式播一次
-    if (practiceMode.value === "practice") scheduleAutoPlay();
-    else playSentence();
+    // 播放整句音频（T041：单次播放）
+    playSentence();
   } catch (e) {
     error.value = (e as Error).message;
   } finally {
@@ -487,7 +483,6 @@ async function onFinish() {
     // 忽略：会话可能已结束
   }
   if (timerId) clearInterval(timerId);
-  clearAutoPlay(); // T034
   await loadSummaryWords(); // T033：提前结束时也可靠显示统计
   phase.value = "done";
 }
@@ -509,31 +504,6 @@ async function playSentence() {
     await audioEl.play();
   } catch {
     // 音频缺失或未生成时静默（按钮仍可用，后续提示）
-  }
-}
-
-// T034：练习模式自动三连播（进句即播 → 5s → 5s）
-let autoPlayTimer: number | null = null;
-let autoPlayCount = 0;
-const AUTO_PLAY_INTERVAL = 5000;
-const AUTO_PLAY_TIMES = 3;
-
-function scheduleAutoPlay() {
-  if (practiceMode.value !== "practice") return; // 仅练习模式
-  clearAutoPlay();
-  autoPlayCount = 0;
-  playAutoOnce();
-}
-function playAutoOnce() {
-  if (autoPlayCount >= AUTO_PLAY_TIMES) return;
-  autoPlayCount += 1;
-  playSentence();
-  autoPlayTimer = window.setTimeout(playAutoOnce, AUTO_PLAY_INTERVAL);
-}
-function clearAutoPlay() {
-  if (autoPlayTimer) {
-    clearTimeout(autoPlayTimer);
-    autoPlayTimer = null;
   }
 }
 
@@ -602,7 +572,6 @@ onMounted(async () => {
 onUnmounted(() => {
   window.removeEventListener("keydown", onKeydown);
   if (timerId) clearInterval(timerId);
-  clearAutoPlay(); // T034
 });
 </script>
 
