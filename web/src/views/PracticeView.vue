@@ -20,6 +20,7 @@ const sentence = ref<Sentence | null>(null);
 const wordIdx = ref(0); // 当前拼写词下标
 const typed = ref(""); // 当前词已输入字符
 const hintSet = ref<Set<number>>(new Set()); // 本句已提示词的 token 下标
+const zhRevealed = ref(false); // T043：复习模式一级提示——已显示汉译（语义锚点）
 const flashError = ref(false); // 错误红闪
 const error = ref("");
 const reportInfo = ref(""); // 报告句子成功的短暂反馈
@@ -57,7 +58,12 @@ const wordConfirm = ref<{ word: string; wordId: number } | null>(null);
 // 间隔表格列（记忆曲线：1→3→7→16→35 天）
 const INTERVAL_COLS = [1, 3, 7, 16, 35];
 
-// T031：回首页刷新到期数量（due=0 横幅自动消失）
+// T043：中文提示分阶段——练习完成后显示/复习一级提示后显示/测试永不显示
+const showZh = computed(() => {
+  if (practiceMode.value === "test") return false;
+  if (practiceMode.value === "review") return zhRevealed.value;
+  return sentenceDoneWait.value; // 练习：整句拼完显示汉译
+});
 watch(phase, async (p) => {
   if (p === "menu" && bannerLoaded.value) {
     try {
@@ -258,6 +264,11 @@ async function onHint() {
   const t = sentence.value!.tokens[wordIdx.value];
   if (!t || t.is_name === 1) return;
   if (hintSet.value.has(wordIdx.value)) return; // 已提示
+  // T043：复习模式两级提示——第一次只显示汉译（锚点，不入本、不算失败）
+  if (practiceMode.value === "review" && !zhRevealed.value) {
+    zhRevealed.value = true;
+    return;
+  }
   busy.value = true;
   try {
     await api.hint();
@@ -351,6 +362,7 @@ async function finishSentence() {
     wordIdx.value = r.next!.wordIdx;
     typed.value = "";
     hintSet.value = new Set();
+    zhRevealed.value = false; // T043：换句重置一级提示
     skipNonVocabWords(); // 复习模式：跳到第一个生词
     await nextTick();
     slideState.value = "enter";
@@ -376,6 +388,7 @@ async function onStart(mode: "practice" | "review" | "test" = "practice", scope?
     typed.value = "";
     hintSet.value = new Set();
     failSet.value = new Set();
+    zhRevealed.value = false; // T043：复习一级提示状态重置
     if (mode === "test") testStats.value = { total: 0, pass: 0, fails: [] }; // 测试会话统计重置
     sessionWordIds.value = new Set(); // 新会话重新累计
     sessionSentenceIds.value = []; // T037
@@ -639,7 +652,7 @@ onUnmounted(() => {
         <div class="progress">
           第 {{ todayList.length + 1 }}/{{ total }} 句 · 用时 {{ elapsedText }}
         </div>
-        <div class="zh">{{ sentence?.zh }}</div>
+        <div v-if="showZh" class="zh">{{ sentence?.zh }}</div>
         <div class="input-card">
           <div class="en" :class="['mode-' + practiceMode, { flash: flashError, 'slide-exit': slideState === 'exit', 'slide-enter': slideState === 'enter' }]">
             <span v-for="(seg, i) in segments" :key="i" :class="renderSegClass(seg)" @click="onWordClick(seg)">
@@ -659,7 +672,7 @@ onUnmounted(() => {
               <button :disabled="busy" @click="onGiveUp">不会</button>
             </template>
             <template v-else>
-              <button :disabled="busy" @click="onHint">提示</button>
+              <button :disabled="busy" @click="onHint">{{ practiceMode === 'review' && !zhRevealed ? '提示（看中文）' : '提示' }}</button>
             </template>
             <button :disabled="busy" @click="openReport">报告句子有误</button>
             <button class="danger" @click="onFinish">结束</button>
