@@ -743,6 +743,10 @@ onUnmounted(() => {
             <span class="label">拼对 / 测试词数（{{ testStats.total ? Math.round((testStats.pass / testStats.total) * 100) + "%" : "—" }}）</span>
           </div>
           <div class="stat">
+            <span class="num">{{ todayList.length }}/{{ total }}</span>
+            <span class="label">完成句子（T044：与进度一致，1 句含多个生词）</span>
+          </div>
+          <div class="stat">
             <span class="num">{{ elapsedText }}</span>
             <span class="label">总用时</span>
           </div>
