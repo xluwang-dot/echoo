@@ -479,3 +479,26 @@ export function getSentenceWithTokens(db: DatabaseSync, sentenceId: number, user
     })),
   };
 }
+// ---------- 句子级别派生（T047b：句中最高词级）----------
+export function computeSentenceLevel(db: DatabaseSync, sentenceId: number): number | null {
+  const row = db
+    .prepare(
+      `SELECT MAX(w.level) AS lv FROM sentence_words sw JOIN words w ON w.id = sw.word_id
+       WHERE sw.sentence_id = ?`
+    )
+    .get(sentenceId) as { lv: number | null } | undefined;
+  return row?.lv ?? null;
+}
+
+// 全量重算所有句子的 level（词级别变更/新句导入后调用）
+export function recomputeAllSentenceLevels(db: DatabaseSync): number {
+  const rows = db
+    .prepare(
+      `SELECT sw.sentence_id, MAX(w.level) AS lv FROM sentence_words sw
+       JOIN words w ON w.id = sw.word_id GROUP BY sw.sentence_id`
+    )
+    .all() as { sentence_id: number; lv: number }[];
+  const upd = db.prepare("UPDATE sentences SET level = ? WHERE id = ?");
+  for (const r of rows) upd.run(r.lv, r.sentence_id);
+  return rows.length;
+}

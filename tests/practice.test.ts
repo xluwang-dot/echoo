@@ -15,6 +15,8 @@ import {
   completeSentence,
   getSentenceWithTokens,
   advanceInterval,
+  computeSentenceLevel,
+  recomputeAllSentenceLevels,
   MASTERY_THRESHOLD,
   getDueReviewSentenceIds,
   drawTestSentenceIds,
@@ -652,3 +654,30 @@ describe("T045 掌握特效数据：completeSentence 返回新掌握词 + master
 });
 
 
+
+describe("T047b 句子级别派生（computeSentenceLevel）", () => {
+  beforeEach(() => {
+    db.exec("DELETE FROM test_records; DELETE FROM practice_sessions; DELETE FROM user_vocab; DELETE FROM word_status; DELETE FROM sentence_words; DELETE FROM sentences; DELETE FROM words;");
+    sid1 = db.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("alpha beta.", "T047b。").lastInsertRowid as number;
+    const widA = db.prepare("INSERT INTO words (word, level) VALUES (?, ?)").run("alpha", 2).lastInsertRowid as number;
+    const widB = db.prepare("INSERT INTO words (word, level) VALUES (?, ?)").run("beta", 4).lastInsertRowid as number;
+    db.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(sid1, widA, 0, 0);
+    db.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(sid1, widB, 1, 0);
+  });
+
+  it("句中 2 级 + 4 级词 → 句子 level=4（取最高）", () => {
+    expect(computeSentenceLevel(db, sid1)).toBe(4);
+  });
+
+  it("无词句（无 sentence_words）→ null", () => {
+    const sid2 = db.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("1. 2.", "T047b2。").lastInsertRowid as number;
+    expect(computeSentenceLevel(db, sid2)).toBeNull();
+  });
+
+  it("recomputeAllSentenceLevels 全量重算并落库", () => {
+    const n = recomputeAllSentenceLevels(db);
+    expect(n).toBe(1);
+    const lv = db.prepare("SELECT level FROM sentences WHERE id=?").get(sid1) as { level: number | null };
+    expect(lv.level).toBe(4);
+  });
+});
