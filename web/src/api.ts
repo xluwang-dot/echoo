@@ -20,6 +20,13 @@ export interface StartResult {
   current: Sentence;
 }
 
+export interface CompleteResult {
+  done: boolean;
+  next?: Sentence;
+  masteredWordIds: number[]; // T045：本次新掌握词（掌握特效触发）
+  masteryCount: number; // T045：当前已掌握总数（里程碑判定）
+}
+
 export interface CheckResult {
   correct: boolean;
   wordDone: boolean;
@@ -98,7 +105,7 @@ export const api = {
   hint: () => req<{ word: string; sentenceDone: boolean }>("POST", "/api/practice/hint", {}),
   backspace: () => req<{ typed: string }>("POST", "/api/practice/backspace", {}),
   complete: (wordResults: { wordId: number; result: string }[]) =>
-    req<{ done: boolean; next?: Sentence }>("POST", "/api/practice/complete", { wordResults }),
+    req<CompleteResult>("POST", "/api/practice/complete", { wordResults }),
   addVocab: (wordId: number) => req<{ ok: boolean }>("POST", "/api/practice/add-vocab", { wordId }),
   finish: () => req<{ ok: boolean; done: number }>("POST", "/api/practice/finish", {}),
   report: (sentenceId: number, description?: string) =>

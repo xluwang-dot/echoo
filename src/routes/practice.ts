@@ -4,7 +4,7 @@ import { Router, Request, Response, NextFunction } from "express";
 import type { DatabaseSync } from "node:sqlite";
 import { getDb } from "../db.js";
 import { requireAuth } from "./auth.js";
-import { getSentenceWithTokens, completeSentence, getDueCount, aggregateVocabState, getDueWords } from "../practice.js";
+import { getSentenceWithTokens, completeSentence, getDueCount, aggregateVocabState, getDueWords, getMasteryCount } from "../practice.js";
 import { wordState, sentenceDone } from "../checker.js";
 import { createSession, getSession, clearSession, elapsedMs } from "../practiceSession.js";
 import { finishSession as persistSession } from "../practice.js";
@@ -212,7 +212,9 @@ export function practiceRouter(db?: DatabaseSync): Router {
     }
     const wordResults = Array.isArray(req.body?.wordResults) ? req.body.wordResults : [];
     const sentenceId = state.sentenceIds[state.idx];
-    completeSentence(database, state.sessionId, req.session.userId!, sentenceId, wordResults);
+    // T045：新掌握词（前端掌握特效）
+    const masteredWordIds = completeSentence(database, state.sessionId, req.session.userId!, sentenceId, wordResults);
+    const masteryCount = getMasteryCount(database, req.session.userId!);
 
     state.idx += 1;
     state.wordIdx = 0;
@@ -221,7 +223,7 @@ export function practiceRouter(db?: DatabaseSync): Router {
     if (done) {
       persistSession(database, state.sessionId, state.sentenceIds.length, elapsedMs(state));
       clearSession(req.session.userId!);
-      res.json({ done: true });
+      res.json({ done: true, masteredWordIds, masteryCount });
     } else {
       const cur = getSentenceWithTokens(database, state.sentenceIds[state.idx], req.session.userId!)!;
       skipNameWords(state, cur.tokens);
@@ -231,6 +233,8 @@ export function practiceRouter(db?: DatabaseSync): Router {
       }
       res.json({
         done: false,
+        masteredWordIds,
+        masteryCount,
         next: {
           sentenceId: cur.id,
           zh: cur.zh,

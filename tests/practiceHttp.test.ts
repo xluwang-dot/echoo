@@ -813,3 +813,49 @@ describe("T035 点击单词加入生词本（add-vocab）", () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe("T045 complete 响应含 masteredWordIds/masteryCount", () => {
+  const TEST_DB10 = path.join(os.tmpdir(), "word_typer_test_t045h.db");
+  let db10: DatabaseSync;
+  let app10: express.Express;
+  let agent10: request.Agent;
+  let sid10: number;
+  let wid10: number;
+
+  beforeAll(async () => {
+    db10 = freshDb();
+    db10.prepare("INSERT INTO users (username, password_hash) VALUES (?, ?)").run("jack", hashPassword("j123456"));
+    const uid = db10.prepare("SELECT id FROM users WHERE username='jack'").get() as { id: number };
+    sid10 = db10.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("foo bar.", "T045h。").lastInsertRowid as number;
+    wid10 = db10.prepare("INSERT INTO words (word) VALUES (?)").run("foo").lastInsertRowid as number;
+    db10.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(sid10, wid10, 0, 0);
+    // 造 candidate：5 次到期成功
+    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    db10.prepare("INSERT INTO user_vocab (user_id, word_id, sentence_id, created_at, interval, review_count, next_review, status) VALUES (?,?,?,?,35,5,?,'candidate')").run(uid.id, wid10, sid10, "2026-08-06", yesterday);
+    app10 = express();
+    app10.use(express.json());
+    app10.use(configureSession());
+    app10.use("/api/auth", authRouter(db10));
+    app10.use("/api/practice", practiceRouter(db10));
+    agent10 = request.agent(app10);
+    const r = await agent10.post("/api/auth/login").send({ username: "jack", password: "j123456" });
+    expect(r.status).toBe(200);
+  });
+  afterAll(() => {
+    db10.close();
+    if (fs.existsSync(TEST_DB10)) fs.unlinkSync(TEST_DB10);
+  });
+  beforeEach(() => {
+    resetSessionStore();
+  });
+
+  it("complete 响应：candidate 验收通过 → masteredWordIds 含该词 + masteryCount 更新", async () => {
+    await agent10.post("/api/practice/start").send({ targetCount: 1, mode: "test" });
+    const comp = await agent10.post("/api/practice/complete").send({
+      wordResults: [{ wordId: wid10, result: "mastered" }],
+    });
+    expect(comp.status).toBe(200);
+    expect(comp.body.masteredWordIds).toContain(wid10);
+    expect(comp.body.masteryCount).toBe(1);
+  });
+});

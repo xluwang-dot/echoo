@@ -411,10 +411,34 @@ export function completeSentence(
   userId: number,
   sentenceId: number,
   outcomes: WordOutcome[]
-): void {
+): number[] {
+  // T045：返回本次新标记 mastered 的词（candidate → mastered，用于前端掌握特效）
+  const masteredWordIds: number[] = [];
   for (const o of outcomes) {
-    recordWord(db, sessionId, userId, o.wordId, sentenceId, o.result);
+    if (o.result === "mastered") {
+      const before = db
+        .prepare("SELECT status FROM user_vocab WHERE user_id=? AND word_id=? AND sentence_id=?")
+        .get(userId, o.wordId, sentenceId) as { status: string } | undefined;
+      recordWord(db, sessionId, userId, o.wordId, sentenceId, o.result);
+      if (before?.status === "candidate") {
+        const after = db
+          .prepare("SELECT status FROM user_vocab WHERE user_id=? AND word_id=? AND sentence_id=?")
+          .get(userId, o.wordId, sentenceId) as { status: string } | undefined;
+        if (after?.status === "mastered") masteredWordIds.push(o.wordId);
+      }
+    } else {
+      recordWord(db, sessionId, userId, o.wordId, sentenceId, o.result);
+    }
   }
+  return masteredWordIds;
+}
+
+// T045：当前已掌握词句对总数（里程碑判定用）
+export function getMasteryCount(db: DatabaseSync, userId: number): number {
+  const row = db
+    .prepare("SELECT COUNT(*) AS c FROM user_vocab WHERE user_id=? AND status='mastered'")
+    .get(userId) as { c: number };
+  return row.c;
 }
 
 // 取句子 + tokens（供前端渲染与判定）

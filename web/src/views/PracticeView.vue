@@ -338,6 +338,12 @@ async function finishSentence() {
   sessionSentenceIds.value.push(sentence.value!.sentenceId); // T037：立即复习必含本句
   const ms = Date.now() - startMs.value;
   const r = await api.complete(wordResults);
+  // T045：掌握特效（新掌握词徽章 + 金色粒子 + 音效）与里程碑
+  if (r.masteredWordIds?.length) {
+    const wNames = r.masteredWordIds.map((id) => tokens.find((t) => t.word_id === id)?.word ?? "");
+    triggerMasteryEffect(wNames);
+  }
+  checkMasteryMilestone(r.masteryCount ?? 0);
   todayList.value.push({ en: sentence.value!.en, ms });
 
   // 连击：本句无提示/无失败 → +1，有 → 归零
@@ -522,7 +528,7 @@ async function playSentence() {
 
 // 彩色纸屑奖励特效
 const CONFETTI_COLORS = ["#ff6b6b", "#4ecdc4", "#45b7d1", "#96ceb4", "#ffeaa7", "#dda0dd", "#ff9ff3", "#48dbfb", "#feca57"];
-function createConfetti(count = 40) {
+function createConfetti(count = 40, colors: string[] = CONFETTI_COLORS) {
   const container = document.querySelector(".confetti-container");
   if (!container) return;
   for (let i = 0; i < count; i++) {
@@ -530,7 +536,7 @@ function createConfetti(count = 40) {
     p.className = "confetti-particle";
     p.style.left = (40 + Math.random() * 20) + "%";
     p.style.top = "45%";
-    p.style.backgroundColor = CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)];
+    p.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
     p.style.width = (4 + Math.random() * 5) + "px";
     p.style.height = (4 + Math.random() * 5) + "px";
     p.style.setProperty("--tx", ((Math.random() - 0.5) * 500) + "px");
@@ -540,6 +546,66 @@ function createConfetti(count = 40) {
     p.style.setProperty("--del", (Math.random() * 0.15) + "s");
     container.appendChild(p);
     setTimeout(() => p.remove(), 2200);
+  }
+}
+
+// T045：掌握特效——徽章浮窗 + 金色粒子 + 音效；里程碑大特效
+const masteryBadge = ref<string | null>(null);
+const milestoneBadge = ref<{ title: string; desc: string } | null>(null);
+let badgeTimer: number | null = null;
+const GOLD_COLORS = ["#ffd700", "#ffb300", "#ffe066", "#fff3b0"];
+
+function createGoldConfetti(count: number) {
+  createConfetti(count, GOLD_COLORS);
+}
+
+// 轻音效（Web Audio 合成叮声，无需音频文件）
+let audioCtx: AudioContext | null = null;
+function playDing(freq = 880, dur = 0.25) {
+  try {
+    if (!audioCtx) audioCtx = new AudioContext();
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = "sine";
+    o.frequency.value = freq;
+    g.gain.setValueAtTime(0.001, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.22, audioCtx.currentTime + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+    o.connect(g).connect(audioCtx.destination);
+    o.start();
+    o.stop(audioCtx.currentTime + dur);
+  } catch {
+    // 浏览器策略/无音频设备：静默
+  }
+}
+
+// 核心特效：新掌握词 → 徽章印章 + 金色粒子 + 叮咚音
+function triggerMasteryEffect(words: string[]) {
+  if (!words.length) return;
+  if (badgeTimer) clearTimeout(badgeTimer);
+  masteryBadge.value = words.join(" · ");
+  createGoldConfetti(50);
+  playDing(880);
+  setTimeout(() => playDing(1320), 160);
+  badgeTimer = window.setTimeout(() => (masteryBadge.value = null), 2000);
+}
+
+// 里程碑：10/50/100 掌握词 → 大特效（localStorage 防重复）
+const MILESTONES = [10, 50, 100];
+function checkMasteryMilestone(count: number) {
+  for (const m of MILESTONES) {
+    if (count < m) break;
+    if (localStorage.getItem(`echoo_milestone_${m}`)) continue;
+    localStorage.setItem(`echoo_milestone_${m}`, "1");
+    createGoldConfetti(120);
+    playDing(660);
+    setTimeout(() => playDing(880), 200);
+    setTimeout(() => playDing(1320), 400);
+    milestoneBadge.value = {
+      title: `🎖️ 已掌握 ${m} 个单词`,
+      desc: m >= 100 ? "词汇大师！" : m >= 50 ? "词汇达人！" : "初露锋芒！",
+    };
+    setTimeout(() => (milestoneBadge.value = null), 3200);
   }
 }
 
@@ -774,6 +840,17 @@ onUnmounted(() => {
           <button v-if="practiceMode === 'practice'" class="danger" @click="onImmediateReview">立即复习</button>
           <button class="primary" @click="onStart(practiceMode)">再来一轮</button>
         </div>
+      </div>
+
+      <!-- T045：掌握徽章浮窗 -->
+      <div v-if="masteryBadge" class="mastery-badge">
+        <div class="badge-stamp">MASTERED ✓</div>
+        <div class="badge-words">{{ masteryBadge }}</div>
+      </div>
+      <!-- T045：里程碑徽章 -->
+      <div v-if="milestoneBadge" class="milestone-badge">
+        <div class="milestone-title">{{ milestoneBadge.title }}</div>
+        <div class="milestone-desc">{{ milestoneBadge.desc }}</div>
       </div>
 
       <!-- 到期词查看（T031） -->
@@ -1169,6 +1246,66 @@ onUnmounted(() => {
   color: #c0392b;
   letter-spacing: 1px;
   margin: 0 4px;
+}
+
+/* T045：掌握徽章浮窗（居中印章） */
+.mastery-badge {
+  position: fixed;
+  top: 32%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: linear-gradient(135deg, #fffbe6, #ffe58f);
+  border: 3px solid #ffd700;
+  border-radius: 16px;
+  padding: 18px 34px;
+  text-align: center;
+  z-index: 200;
+  box-shadow: 0 8px 30px rgba(255, 193, 7, 0.45);
+  animation: badge-pop 0.35s ease-out;
+}
+.badge-stamp {
+  font-size: 22px;
+  font-weight: 800;
+  color: #d48806;
+  letter-spacing: 2px;
+}
+.badge-words {
+  margin-top: 6px;
+  font-size: 26px;
+  font-weight: 800;
+  color: #c0392b;
+}
+@keyframes badge-pop {
+  0% { transform: translateX(-50%) scale(0.4); opacity: 0; }
+  70% { transform: translateX(-50%) scale(1.08); opacity: 1; }
+  100% { transform: translateX(-50%) scale(1); }
+}
+/* T045：里程碑徽章（全屏居中大卡） */
+.milestone-badge {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 300;
+  animation: fade-in 0.3s;
+}
+.milestone-title {
+  font-size: 40px;
+  font-weight: 800;
+  color: #ffd700;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+}
+.milestone-desc {
+  margin-top: 10px;
+  font-size: 22px;
+  color: #fff;
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 .done {
   margin: auto;

@@ -459,7 +459,7 @@ describe("T037 立即复习 includeSentenceIds（必含指定句子）", () => {
     sid1 = db.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("foo bar baz.", "A。").lastInsertRowid as number;
     sid2 = db.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("qux quux corge.", "B。").lastInsertRowid as number;
     widFoo = db.prepare("INSERT INTO words (word) VALUES (?)").run("foo").lastInsertRowid as number;
-    const widBar = db.prepare("INSERT INTO words (word) VALUES (?)").run("bar").lastInsertRowid as number;
+    widBar = db.prepare("INSERT INTO words (word) VALUES (?)").run("bar").lastInsertRowid as number;
     db.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(sid1, widFoo, 0, 0);
     db.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(sid1, widBar, 1, 0);
     addVocab(db, userA, widFoo, sid1); // 句子1 在生词本（未到期）
@@ -547,7 +547,7 @@ describe("T040 掌握判定：5 次到期成功 → candidate → 测试通过 �
     sid1 = db.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("foo bar baz.", "T040。").lastInsertRowid as number;
     sid2 = db.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("qux quux.", "T040b。").lastInsertRowid as number;
     widFoo = db.prepare("INSERT INTO words (word) VALUES (?)").run("foo").lastInsertRowid as number;
-    const widBar = db.prepare("INSERT INTO words (word) VALUES (?)").run("bar").lastInsertRowid as number;
+    widBar = db.prepare("INSERT INTO words (word) VALUES (?)").run("bar").lastInsertRowid as number;
     db.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(sid1, widFoo, 0, 0);
     db.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(sid1, widBar, 1, 0);
     addVocab(db, userA, widFoo, sid1);
@@ -613,3 +613,42 @@ describe("T040 掌握判定：5 次到期成功 → candidate → 测试通过 �
     expect(p.interval).toBe(1);
   });
 });
+
+describe("T045 掌握特效数据：completeSentence 返回新掌握词 + masteryCount", () => {
+  beforeEach(() => {
+    db.exec("DELETE FROM test_records; DELETE FROM practice_sessions; DELETE FROM user_vocab; DELETE FROM word_status; DELETE FROM sentence_words; DELETE FROM sentences; DELETE FROM words;");
+    sid1 = db.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("foo bar baz.", "T045。").lastInsertRowid as number;
+    widFoo = db.prepare("INSERT INTO words (word) VALUES (?)").run("foo").lastInsertRowid as number;
+    widBar = db.prepare("INSERT INTO words (word) VALUES (?)").run("bar").lastInsertRowid as number;
+    db.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(sid1, widFoo, 0, 0);
+    db.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(sid1, widBar, 1, 0);
+    addVocab(db, userA, widFoo, sid1);
+    addVocab(db, userA, widBar, sid1);
+  });
+
+  const toCandidate = (wid: number) => {
+    for (let i = 0; i < MASTERY_THRESHOLD; i++) {
+      db.prepare("UPDATE user_vocab SET next_review=? WHERE user_id=? AND word_id=? AND sentence_id=?").run(daysAgo(1), userA, wid, sid1);
+      const sid = startSession(db, userA, 1);
+      recordWord(db, sid, userA, wid, sid1, "mastered");
+    }
+  };
+
+  it("candidate 词测试通过 → completeSentence 返回该词为新掌握", () => {
+    toCandidate(widFoo); // foo → candidate
+    const sid = startSession(db, userA, 1);
+    const mastered = completeSentence(db, sid, userA, sid1, [{ wordId: widFoo, result: "mastered" }]);
+    expect(mastered).toContain(widFoo);
+    // bar 仍是 learning（未达候选）→ 不返回
+    const mastered2 = completeSentence(db, sid, userA, sid1, [{ wordId: widBar, result: "mastered" }]);
+    expect(mastered2).not.toContain(widBar);
+  });
+
+  it("普通 learning 词推进不返回新掌握", () => {
+    const sid = startSession(db, userA, 1);
+    const mastered = completeSentence(db, sid, userA, sid1, [{ wordId: widBar, result: "mastered" }]);
+    expect(mastered).toEqual([]);
+  });
+});
+
+
