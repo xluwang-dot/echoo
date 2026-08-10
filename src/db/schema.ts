@@ -19,7 +19,7 @@ export const TABLES = [
 // 每表关键列（用于测试核对）
 export const EXPECTED_COLUMNS: Record<string, string[]> = {
   words: ["id", "word", "freq", "is_name", "years", "level", "meaning", "phonetic", "audio_path"],
-  sentences: ["id", "en", "zh", "round", "topic", "section", "source", "level", "prev_en"],
+  sentences: ["id", "en", "zh", "round", "topic", "section", "source", "level", "prev_en", "next_en"],
   sentence_words: ["sentence_id", "word_id", "position", "is_bold"],
   audio: ["id", "sentence_id", "file_path", "duration_ms", "word_offsets"],
   users: ["id", "username", "password_hash", "nickname", "preferences", "level"],
@@ -53,7 +53,8 @@ CREATE TABLE IF NOT EXISTS sentences (
   section TEXT,
   source TEXT,
   level INTEGER, -- T047：派生=句中所有词的最高 level（可空=未计算）
-  prev_en TEXT    -- T058：课内上一句（对话语境提示，可空）
+  prev_en TEXT,   -- T058：课内上一句（对话语境提示，可空）
+  next_en TEXT    -- T058：课内下一句（问句时提示答句，可空）
 );
 
 CREATE TABLE IF NOT EXISTS sentence_words (

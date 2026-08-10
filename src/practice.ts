@@ -9,6 +9,7 @@ export interface SentenceWithTokens {
   en: string;
   zh: string;
   prev_en: string | null; // T058：课内上一句（对话语境提示）
+  next_en: string | null; // T058：课内下一句（问句时提示答句）
   tokens: { word_id: number; word: string; is_name: number; is_bold: number; in_vocab: boolean }[];
 }
 
@@ -506,8 +507,8 @@ export function getMasteryCount(db: DatabaseSync, userId: number): number {
 // 取句子 + tokens（供前端渲染与判定）
 // userId 可选：传入时计算每个词的 in_vocab 状态（复习模式用）
 export function getSentenceWithTokens(db: DatabaseSync, sentenceId: number, userId?: number): SentenceWithTokens | undefined {
-  const s = db.prepare("SELECT id, en, zh, prev_en FROM sentences WHERE id = ?").get(sentenceId) as
-    | { id: number; en: string; zh: string; prev_en: string | null }
+  const s = db.prepare("SELECT id, en, zh, prev_en, next_en FROM sentences WHERE id = ?").get(sentenceId) as
+    | { id: number; en: string; zh: string; prev_en: string | null; next_en: string | null }
     | undefined;
   if (!s) return undefined;
   const rows = db
@@ -535,6 +536,7 @@ export function getSentenceWithTokens(db: DatabaseSync, sentenceId: number, user
     en: s.en,
     zh: s.zh,
     prev_en: s.prev_en, // T058：上一句（对话语境提示）
+    next_en: s.next_en, // T058：下一句
     tokens: rows.map((r) => ({
       word_id: r.word_id,
       word: enTokens[r.position] ?? r.word, // B0009：用原文大小写（I'm 而非 i'm）

@@ -36,6 +36,7 @@ const MIGRATIONS: [string, string, string][] = [
   // T053a：用户等级
   ["users", "level", "INTEGER DEFAULT 1"],
   ["sentences", "prev_en", "TEXT"], // T058
+  ["sentences", "next_en", "TEXT"], // T058
 ];
 
 function migrate(db: DatabaseSync): void {

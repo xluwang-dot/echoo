@@ -64,6 +64,9 @@ const wordConfirm = ref<{ word: string; wordId: number } | null>(null);
 // 间隔表格列（记忆曲线：1→3→7→16→35 天）
 const INTERVAL_COLS = [1, 3, 7, 16, 35];
 
+// T058：当前句是否为问句（决定语境提示上句/下句）
+const isQuestion = computed(() => (sentence.value?.en.trim().endsWith("?") ?? false));
+
 // T051：长句动态字号（不拆句，句子越长字号越小）
 const enSize = computed(() => {
   const n = sentence.value?.en.split(/\s+/).length ?? 0;
@@ -814,8 +817,9 @@ onUnmounted(() => {
         </div>
         <div v-if="showZh" class="zh">
           {{ sentence?.zh }}
-          <!-- T058：对话语境提示（上句小字，不抢主内容） -->
-          <div v-if="sentence?.prev_en" class="ctx">↳ 上句：{{ sentence.prev_en }}</div>
+          <!-- T058：对话语境提示（问句显下句/答句显上句，互补语境；小字不抢主内容） -->
+          <div v-if="isQuestion && sentence?.next_en" class="ctx">↳ 下句：{{ sentence.next_en }}</div>
+          <div v-else-if="!isQuestion && sentence?.prev_en" class="ctx">↳ 上句：{{ sentence.prev_en }}</div>
         </div>
         <div class="input-card">
           <div class="en" :class="['mode-' + practiceMode, 'size-' + enSize, { flash: flashError, 'slide-exit': slideState === 'exit', 'slide-enter': slideState === 'enter' }]">
