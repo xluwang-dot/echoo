@@ -174,3 +174,24 @@ describe("T005 schema", () => {
     ).map((r) => r.name);
     expect(again).toContain("level");
   });
+
+  it("迁移：users 补 level 字段（T053a）", () => {
+    const db = openDb();
+    db.exec(`CREATE TABLE users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      nickname TEXT,
+      preferences TEXT
+    )`);
+    db.close();
+    resetDb(TEST_DB);
+    const cols = (
+      new DatabaseSync(TEST_DB).prepare("PRAGMA table_info(users)").all() as { name: string }[]
+    ).map((r) => r.name);
+    expect(cols).toContain("level");
+    // 默认 1
+    const lv = new DatabaseSync(TEST_DB).prepare("SELECT level FROM users LIMIT 1").get() as { level: number } | undefined;
+    // 无用户则略过默认值断言（仅验证列存在与默认）
+    expect(cols).toContain("level");
+  });

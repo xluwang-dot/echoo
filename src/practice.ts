@@ -231,6 +231,7 @@ export interface DrawConfig {
   reviewRatio?: number;
   reviewOnly?: boolean; // 纯复习模式：只从生词本抽取
   includeSentenceIds?: number[]; // T037：复习模式必含的句子（立即复习：当前练习入本句子）
+  level?: number; // T053a：用户等级（1=纯1级；>1=与上一级混合 1:1）
 }
 
 // 按比例抽取：U（未测试）: R（生词本复习）= 3:7，不足从已测试补齐（§3.3.4）
@@ -244,9 +245,28 @@ export function drawSession(
   const { newRatio = 3, reviewRatio = 7, reviewOnly = false } = config;
   // 被报告句子：常规池剔除、放兜底末尾（§3.6 优先规避）
   const reported = new Set(getReportedSentenceIds(db));
-  const untested = getUntestedSentenceIds(db, userId).filter((id) => !reported.has(id));
+  let untested = getUntestedSentenceIds(db, userId).filter((id) => !reported.has(id));
   const review = getReviewSentenceIds(db, userId).filter((id) => !reported.has(id));
   const tested = getTestedSentenceIds(db, userId).filter((id) => !reported.has(id));
+
+  // T053a：按用户等级过滤未测试池（混合模式）
+  const level = config.level ?? 0;
+  if (level >= 1) {
+    const lvMap = new Map<number, number | null>();
+    for (const r of db.prepare("SELECT id, level FROM sentences").all() as { id: number; level: number | null }[]) {
+      lvMap.set(r.id, r.level);
+    }
+    const lvOf = (id: number) => lvMap.get(id); // null=通用句（放行）
+    const okLv = (id: number, lv: number) => lvOf(id) === null || lvOf(id) === lv;
+    if (level === 1) {
+      untested = untested.filter((id) => okLv(id, 1)); // 纯 1 级（含通用句）
+    } else {
+      // 混合：level-1 未测试句优先（1:1），耗尽转纯 level
+      const prevUntested = untested.filter((id) => okLv(id, level - 1));
+      const curUntested = untested.filter((id) => okLv(id, level));
+      untested = [...prevUntested, ...curUntested]; // prev 优先，抽完自然转纯 level
+    }
+  }
 
   // 纯复习模式：只从生词本抽取（T027：到期优先；T037：include 必含）
   if (reviewOnly) {
@@ -283,6 +303,25 @@ export function drawSession(
   const reviewCount = Math.round((targetCount * reviewRatio) / totalRatio);
 
   let fromNew = sample(untested, newCount);
+  // T053a：混合模式 1:1 —— prev 未测试句与 cur 新句各取一半
+  if (level > 1) {
+    const lvMap = new Map<number, number | null>();
+    for (const r of db.prepare("SELECT id, level FROM sentences").all() as { id: number; level: number | null }[]) {
+      lvMap.set(r.id, r.level);
+    }
+    const lvOf = (id: number) => lvMap.get(id);
+    const okLv = (id: number, lv: number) => lvOf(id) === null || lvOf(id) === lv;
+    const prevHalf = sample(untested.filter((id) => okLv(id, level - 1)), Math.ceil(newCount / 2));
+    const curHalf = sample(untested.filter((id) => okLv(id, level)), Math.floor(newCount / 2));
+    if (prevHalf.length > 0) {
+      // prev 未测试句充足 → 1:1 混合；不足则 cur 补满
+      fromNew = [...prevHalf, ...curHalf].slice(0, newCount);
+      if (prevHalf.length < Math.ceil(newCount / 2)) {
+        const more = sample(untested.filter((id) => lvOf(id) === level && !fromNew.includes(id)), newCount - fromNew.length);
+        fromNew = [...fromNew, ...more];
+      }
+    }
+  }
   let fromReview = sample(review.filter((id) => !fromNew.includes(id)), reviewCount);
 
   // 补充未满部分，优先未测试 → 生词本 → 已测试（不重复）
@@ -299,9 +338,26 @@ export function drawSession(
   push(fromReview);
 
   // 补齐顺序：未测试剩余 → 生词本剩余 → 已测试剩余 → 被报告句子（§3.6 优先规避，常规池耗尽才用）
-  const fillNew = untested.filter((id) => !seen.has(id));
-  const fillReview = review.filter((id) => !seen.has(id));
-  const fillTested = tested.filter((id) => !seen.has(id));
+  // T053a：补齐池同样按等级过滤（用户只练已解锁级别）
+  const inLevelPool = level >= 1 ? (() => {
+    const lvMap = new Map<number, number | null>();
+    for (const r of db.prepare("SELECT id, level FROM sentences").all() as { id: number; level: number | null }[]) {
+      lvMap.set(r.id, r.level);
+    }
+    const lvOf = (id: number) => lvMap.get(id);
+    const okLv = (id: number, lv: number) => lvOf(id) === null || lvOf(id) === lv;
+    return {
+      // 新句/生词本：混合级别（level-1 + level）
+      mixed: (id: number) => (level === 1 ? okLv(id, 1) : okLv(id, level - 1) || okLv(id, level)),
+      // 已测试补齐：仅当前级（T053a：上一级已测试句不重复练习，实现「1 级抽完转纯」）
+      testedOnly: (id: number) => okLv(id, level),
+    };
+  })() : null;
+  const filterLv = (ids: number[], fn?: (id: number) => boolean) =>
+    inLevelPool ? ids.filter(fn ?? inLevelPool.mixed) : ids;
+  const fillNew = filterLv(untested.filter((id) => !seen.has(id)));
+  const fillReview = filterLv(review.filter((id) => !seen.has(id)));
+  const fillTested = filterLv(tested.filter((id) => !seen.has(id)), inLevelPool ? inLevelPool.testedOnly : undefined);
   const fillReported = [...reported].filter((id) => !seen.has(id));
   for (const id of [...fillNew, ...fillReview, ...fillTested, ...fillReported]) {
     if (result.length >= targetCount) break;
@@ -310,7 +366,8 @@ export function drawSession(
   }
 
   // 极端兜底：池总数仍不足 target 时循环复用（需求：不再出现无题可练）
-  const allPool = [
+  // T053a：等级模式下兜底不跨级（用户只练已解锁级别）
+  let allPool = [
     ...new Set([
       ...untested,
       ...review,
@@ -318,6 +375,10 @@ export function drawSession(
       ...(db.prepare("SELECT id FROM sentences").all() as { id: number }[]).map((r) => r.id),
     ]),
   ];
+  if (inLevelPool) {
+    // 兜底仅当前级（1 级已测试句不重复练习，实现「抽完转纯」）
+    allPool = allPool.filter(inLevelPool.testedOnly);
+  }
   while (result.length < targetCount && allPool.length > 0) {
     // 循环追加，重复允许（池耗尽但需凑满 target）
     const from = Math.floor(Math.random() * allPool.length);
@@ -501,4 +562,15 @@ export function recomputeAllSentenceLevels(db: DatabaseSync): number {
   const upd = db.prepare("UPDATE sentences SET level = ? WHERE id = ?");
   for (const r of rows) upd.run(r.lv, r.sentence_id);
   return rows.length;
+}
+
+// ---------- 用户等级（T053a）----------
+export function getUserLevel(db: DatabaseSync, userId: number): number {
+  const row = db.prepare("SELECT level FROM users WHERE id = ?").get(userId) as { level: number } | undefined;
+  return row?.level ?? 1;
+}
+
+// 升级解锁：level 1~4
+export function updateUserLevel(db: DatabaseSync, userId: number, level: number): void {
+  db.prepare("UPDATE users SET level = ? WHERE id = ?").run(level, userId);
 }

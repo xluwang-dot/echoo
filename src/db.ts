@@ -33,6 +33,8 @@ const MIGRATIONS: [string, string, string][] = [
   ["words", "phonetic", "TEXT"],
   ["words", "audio_path", "TEXT"],
   ["sentences", "level", "INTEGER"],
+  // T053a：用户等级
+  ["users", "level", "INTEGER DEFAULT 1"],
 ];
 
 function migrate(db: DatabaseSync): void {

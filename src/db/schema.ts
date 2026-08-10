@@ -21,7 +21,7 @@ export const EXPECTED_COLUMNS: Record<string, string[]> = {
   sentences: ["id", "en", "zh", "round", "topic", "section", "source", "level"],
   sentence_words: ["sentence_id", "word_id", "position", "is_bold"],
   audio: ["id", "sentence_id", "file_path", "duration_ms", "word_offsets"],
-  users: ["id", "username", "password_hash", "nickname", "preferences"],
+  users: ["id", "username", "password_hash", "nickname", "preferences", "level"],
   user_vocab: ["user_id", "word_id", "sentence_id", "created_at", "interval", "review_count", "next_review", "status", "fail_count"],
   word_status: ["user_id", "word_id", "status", "updated_at"],
   practice_sessions: ["id", "user_id", "target_count", "start_time", "end_time", "done_count", "total_ms", "mode"],
@@ -78,7 +78,8 @@ CREATE TABLE IF NOT EXISTS users (
   username TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   nickname TEXT,
-  preferences TEXT
+  preferences TEXT,
+  level INTEGER DEFAULT 1 -- T053a：用户等级 1~4（解锁的内容级别）
 );
 
 CREATE TABLE IF NOT EXISTS user_vocab (

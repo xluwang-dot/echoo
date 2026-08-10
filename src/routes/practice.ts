@@ -4,7 +4,7 @@ import { Router, Request, Response, NextFunction } from "express";
 import type { DatabaseSync } from "node:sqlite";
 import { getDb } from "../db.js";
 import { requireAuth } from "./auth.js";
-import { getSentenceWithTokens, completeSentence, getDueCount, aggregateVocabState, getDueWords, getMasteryCount } from "../practice.js";
+import { getSentenceWithTokens, completeSentence, getDueCount, aggregateVocabState, getDueWords, getMasteryCount, getUserLevel } from "../practice.js";
 import { wordState, sentenceDone } from "../checker.js";
 import { createSession, getSession, clearSession, elapsedMs } from "../practiceSession.js";
 import { finishSession as persistSession } from "../practice.js";
@@ -78,6 +78,7 @@ export function practiceRouter(db?: DatabaseSync): Router {
       mode,
       scope,
       includeSentenceIds,
+      level: getUserLevel(database, req.session.userId!), // T053a
     });
     // 空会话（复习/测试无词句对）：友好提示而非 500（T032 边界）
     if (state.sentenceIds.length === 0) {

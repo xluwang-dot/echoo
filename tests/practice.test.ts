@@ -21,6 +21,8 @@ import {
   getDueReviewSentenceIds,
   drawTestSentenceIds,
   getDueCount,
+  getUserLevel,
+  updateUserLevel,
 } from "../src/practice.js";
 import { addVocab } from "../src/vocab.js";
 
@@ -679,5 +681,49 @@ describe("T047b 句子级别派生（computeSentenceLevel）", () => {
     expect(n).toBe(1);
     const lv = db.prepare("SELECT level FROM sentences WHERE id=?").get(sid1) as { level: number | null };
     expect(lv.level).toBe(4);
+  });
+});
+
+describe("T053a 用户等级抽取（level 过滤 + 混合 1:1）", () => {
+  beforeEach(() => {
+    db.exec("DELETE FROM test_records; DELETE FROM practice_sessions; DELETE FROM user_vocab; DELETE FROM word_status; DELETE FROM sentence_words; DELETE FROM sentences; DELETE FROM words;");
+    // 造 1 级句与 2 级句
+    sid1 = db.prepare("INSERT INTO sentences (en, zh, level) VALUES (?, ?, 1)").run("foo bar.", "L1。").lastInsertRowid as number;
+    sid2 = db.prepare("INSERT INTO sentences (en, zh, level) VALUES (?, ?, 1)").run("baz qux.", "L1b。").lastInsertRowid as number;
+    sid3 = db.prepare("INSERT INTO sentences (en, zh, level) VALUES (?, ?, 2)").run("alpha beta.", "L2。").lastInsertRowid as number;
+    for (const [sid, w] of [[sid1, "foo"], [sid2, "baz"], [sid3, "alpha"]]) {
+      const wid = db.prepare("INSERT INTO words (word, level) VALUES (?, ?)").run(w, sid === sid3 ? 2 : 1).lastInsertRowid as number;
+      db.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(sid, wid, 0, 0);
+    }
+  });
+
+  it("level=1：只抽 1 级句", () => {
+    const ids = drawSession(db, userA, 2, { newRatio: 10, reviewRatio: 0, level: 1 });
+    expect(ids.every((id) => id === sid1 || id === sid2)).toBe(true);
+  });
+
+  it("level=2 混合：优先含 1 级未测试句（1:1 直到 1 级抽完）", () => {
+    // target=4：1 级 2 句 + 2 级 1 句 → 混合应抽到 1 级句（prev 优先）
+    const ids = drawSession(db, userA, 4, { newRatio: 10, reviewRatio: 0, level: 2 });
+    expect(ids).toContain(sid1); // 1 级句优先
+    expect(ids).toContain(sid2);
+    expect(ids).toContain(sid3); // 2 级句补充
+  });
+
+  it("level=2 且 1 级未测试耗尽 → 纯 2 级", () => {
+    // 先测试完 1 级句
+    const sid = startSession(db, userA, 4);
+    const widFoo = (db.prepare("SELECT id FROM words WHERE word='foo'").get() as { id: number }).id;
+    const widBaz = (db.prepare("SELECT id FROM words WHERE word='baz'").get() as { id: number }).id;
+    completeSentence(db, sid, userA, sid1, [{ wordId: widFoo, result: "mastered" }]);
+    completeSentence(db, sid, userA, sid2, [{ wordId: widBaz, result: "mastered" }]);
+    const ids = drawSession(db, userA, 4, { newRatio: 10, reviewRatio: 0, level: 2 });
+    expect(ids.every((id) => id === sid3)).toBe(true); // 只剩 2 级句
+  });
+
+  it("getUserLevel/updateUserLevel 读写", () => {
+    expect(getUserLevel(db, userA)).toBe(1);
+    updateUserLevel(db, userA, 2);
+    expect(getUserLevel(db, userA)).toBe(2);
   });
 });
