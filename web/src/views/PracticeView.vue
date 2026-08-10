@@ -387,6 +387,7 @@ async function finishSentence() {
     await loadSummaryWords(); // T033：统计表格数据在 done 渲染前就绪
     phase.value = "done";
   } else {
+    error.value = ""; // T054：换句清除残留提示
     // 替换句子，新句从右侧滑入
     sentence.value = r.next!;
     wordIdx.value = r.next!.wordIdx;
@@ -833,7 +834,7 @@ onUnmounted(() => {
               <button :disabled="busy" @click="onGiveUp">不会</button>
             </template>
             <template v-else>
-              <button :disabled="busy" @click="onHint">{{ practiceMode === 'review' && !zhRevealed ? '提示（看中文）' : '提示' }}</button>
+              <button v-if="!sentenceDoneWait" :disabled="busy" @click="onHint">{{ practiceMode === 'review' && !zhRevealed ? '提示（看中文）' : '提示' }}</button>
             </template>
             <button :disabled="busy" @click="openReport">报告句子有误</button>
             <button class="danger" @click="onFinish">结束</button>
