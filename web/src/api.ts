@@ -25,6 +25,8 @@ export interface CompleteResult {
   next?: Sentence;
   masteredWordIds: number[]; // T045：本次新掌握词（掌握特效触发）
   masteryCount: number; // T045：当前已掌握总数（里程碑判定）
+  levelUp?: boolean; // T053b：升级测试通过
+  newLevel?: number;
 }
 
 export interface CheckResult {
@@ -96,6 +98,7 @@ export const api = {
     req<{ id: number; username: string; nickname: string; preferences: Record<string, unknown> }>("POST", "/api/auth/preferences", preferences),
 
   dueCount: () => req<{ due: number }>("GET", "/api/practice/due-count"),
+  levelupStatus: () => req<{ level: number; ready: boolean; rule: string }>("GET", "/api/practice/levelup-status"), // T053b
   dueWords: () => req<{ words: VocabStateItem[] }>("GET", "/api/practice/due-words"),
   vocabState: (wordIds: number[]) => req<{ words: VocabStateItem[] }>("POST", "/api/practice/vocab-state", { wordIds }),
 

@@ -9,7 +9,7 @@ const router = useRouter();
 const phase = ref<"menu" | "running" | "done">("menu");
 const targetCount = ref(10);
 const practiceMode = ref<"practice" | "review" | "test">("practice");
-const testScope = ref<"all" | "near" | "fail" | "mastered">("all"); // 测试范围（T028）
+const testScope = ref<"all" | "near" | "fail" | "mastered" | "levelup">("all"); // 测试范围（T028）
 const scopeOpen = ref(false); // 测试范围选择弹窗
 const failSet = ref<Set<number>>(new Set()); // 测试模式：本句标「不会」的词
 const testStats = ref<{ total: number; pass: number; fails: string[] }>({ total: 0, pass: 0, fails: [] }); // 测试会话统计
@@ -45,6 +45,12 @@ const bannerLoaded = ref(false);
 // T031：到期横幅「查看单词」弹窗
 const dueWordsModal = ref(false);
 const dueWordsList = ref<VocabStateItem[]>([]);
+// T053b：升级测试
+const userLevel = ref(1);
+const levelTimeLeft = ref(0);
+const levelTimerId = ref<number | null>(null);
+const levelUpResult = ref<{ newLevel: number } | null>(null);
+const isLevelUp = computed(() => practiceMode.value === "test" && testScope.value === "levelup");
 // T031：复习会话累计词 + 总结表格
 const sessionWordIds = ref<Set<number>>(new Set());
 const sessionSentenceIds = ref<number[]>([]); // T037：本次练习句子 id（立即复习必含）
@@ -322,7 +328,7 @@ async function finishSentence() {
   const isTest = practiceMode.value === "test";
   const wordResults = tokens
     .map((t, i) => ({ t, i }))
-    .filter(({ t }) => t.is_name !== 1 && (isTest ? t.in_vocab : true))
+    .filter(({ t }) => t.is_name !== 1 && (isTest ? (isLevelUp.value || t.in_vocab) : true)) // T053b：升级测试提交全部词
     .map(({ t, i }) =>
       isTest
         ? { wordId: t.word_id, result: failSet.value.has(i) ? ("test_fail" as const) : ("mastered" as const) }
@@ -368,7 +374,16 @@ async function finishSentence() {
 
   if (r.done) {
     finishDone.value = true;
+    stopLevelTimer(); // T053b
     if (timerId) clearInterval(timerId); // T037：统计页停止计时
+    // T053b：升级测试通过 → 升级结果 + 大特效
+    if (r.levelUp) {
+      levelUpResult.value = { newLevel: r.newLevel ?? 0 };
+      createGoldConfetti(120);
+      playDing(660);
+      setTimeout(() => playDing(880), 200);
+      setTimeout(() => playDing(1320), 400);
+    }
     await loadSummaryWords(); // T033：统计表格数据在 done 渲染前就绪
     phase.value = "done";
   } else {
@@ -385,11 +400,12 @@ async function finishSentence() {
     slideState.value = "idle";
     // 播放整句音频（T041：单次播放）
     playSentence();
+    if (isLevelUp.value) startLevelTimer(); // T053b：升级测试换句重新计时
   }
 }
 
 // ---------- 开始/结束 ----------
-async function onStart(mode: "practice" | "review" | "test" = "practice", scope?: "all" | "near" | "fail" | "mastered", includeSentenceIds?: number[]) {
+async function onStart(mode: "practice" | "review" | "test" = "practice", scope?: "all" | "near" | "fail" | "mastered" | "levelup", includeSentenceIds?: number[]) {
   error.value = "";
   busy.value = true;
   practiceMode.value = mode;
@@ -422,6 +438,7 @@ async function onStart(mode: "practice" | "review" | "test" = "practice", scope?
     }, 1000);
     // 播放整句音频（T041：单次播放）
     playSentence();
+    if (isLevelUp.value) startLevelTimer(); // T053b
   } catch (e) {
     error.value = (e as Error).message;
   } finally {
@@ -433,7 +450,7 @@ async function onStart(mode: "practice" | "review" | "test" = "practice", scope?
 function openTestScope() {
   scopeOpen.value = true;
 }
-function startTest(scope: "all" | "near" | "fail" | "mastered") {
+function startTest(scope: "all" | "near" | "fail" | "mastered" | "levelup") {
   scopeOpen.value = false;
   onStart("test", scope);
 }
@@ -490,6 +507,51 @@ async function confirmAddWord() {
 function onImmediateReview() {
   const include = [...new Set(sessionSentenceIds.value)];
   onStart("review", undefined, include);
+}
+
+// T053b：升级测试限时（句时限 = 词数×5s×150%）
+function startLevelTimer() {
+  stopLevelTimer();
+  const words = sentence.value?.en.split(/\s+/).length ?? 1;
+  levelTimeLeft.value = Math.ceil(words * 5 * 1.5);
+  levelTimerId.value = window.setInterval(() => {
+    levelTimeLeft.value -= 1;
+    if (levelTimeLeft.value <= 0) {
+      stopLevelTimer();
+      timeoutSentence();
+    }
+  }, 1000);
+}
+function stopLevelTimer() {
+  if (levelTimerId.value) {
+    clearInterval(levelTimerId.value);
+    levelTimerId.value = null;
+  }
+}
+// 超时：当前句未完成词全部 test_fail → 提交（整句算错）
+function timeoutSentence() {
+  if (phase.value !== "running") return;
+  const tokens = sentence.value!.tokens;
+  for (let i = wordIdx.value; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (t.is_name !== 1 && t.in_vocab) failSet.value.add(i);
+  }
+  finishSentence();
+}
+
+// 升级按钮：有活跃邀请 → 进升级测试；否则提示规则
+async function onLevelUpClick() {
+  try {
+    const st = await api.levelupStatus();
+    userLevel.value = st.level;
+    if (st.ready) {
+      onStart("test", "levelup");
+    } else {
+      error.value = `当前等级 ${st.level}。${st.rule}`;
+    }
+  } catch (e) {
+    error.value = (e as Error).message;
+  }
 }
 
 // 到期横幅「查看单词」：拉取到期词并弹窗展示（T031）
@@ -714,6 +776,12 @@ onUnmounted(() => {
             <h2>测试</h2>
             <p>验收生词掌握度（禁提示）</p>
           </div>
+          <!-- T053b：升级入口 -->
+          <div class="menu-card" @click="onLevelUpClick">
+            <div class="card-icon">🏅</div>
+            <h2>升级</h2>
+            <p>等级 {{ userLevel }} · 测试解锁下一级</p>
+          </div>
           <div class="menu-card" @click="router.push('/vocab')">
             <div class="card-icon">📖</div>
             <h2>生词本</h2>
@@ -756,6 +824,8 @@ onUnmounted(() => {
           <div v-if="sentenceDoneWait" class="done-wait">
             ✅ 已输入完成，按 <strong>回车</strong> 进入下一句；点击单词可加入生词本
           </div>
+          <!-- T053b：升级测试限时 -->
+          <div v-if="isLevelUp" class="level-timer">⏱ 本句剩余 {{ levelTimeLeft }}s（超时整句算错）</div>
           <div class="actions">
             <button :disabled="busy" @click="playSentence">朗读</button>
             <template v-if="practiceMode === 'test'">
@@ -803,7 +873,12 @@ onUnmounted(() => {
 
       <!-- 完成 -->
       <div v-else class="done">
-        <h2>{{ practiceMode === 'review' ? '复习完成' : practiceMode === 'test' ? '测试完成' : '练习完成' }}</h2>
+        <!-- T053b：升级结果 -->
+        <div v-if="levelUpResult" class="levelup-result">
+          <div class="levelup-title">🎉 升级成功！</div>
+          <div class="levelup-level">当前等级 {{ levelUpResult.newLevel }}（{{ levelUpResult.newLevel === 2 ? '初中' : levelUpResult.newLevel === 3 ? '高中' : levelUpResult.newLevel === 4 ? '大学' : '小学' }}级内容已解锁）</div>
+        </div>
+        <h2>{{ practiceMode === 'review' ? '复习完成' : practiceMode === 'test' ? (levelUpResult ? '升级测试完成' : '测试完成') : '练习完成' }}</h2>
         <!-- 总结表格（T031/T034/T036）：表头=间隔天数，每行一个单词（复习/练习模式） -->
         <div v-if="practiceMode !== 'test' && summaryWords.length" class="summary-wrap">
           <h3>{{ practiceMode === 'review' ? '本次复习单词间隔状态' : '本次练习单词状态' }}</h3>
@@ -1285,6 +1360,32 @@ onUnmounted(() => {
   color: #c0392b;
   letter-spacing: 1px;
   margin: 0 4px;
+}
+
+/* T053b：升级测试限时 + 升级结果 */
+.level-timer {
+  margin-top: 12px;
+  color: #c0392b;
+  font-weight: 700;
+  font-size: 15px;
+}
+.levelup-result {
+  text-align: center;
+  margin-bottom: 16px;
+  padding: 16px;
+  background: linear-gradient(135deg, #fffbe6, #ffe58f);
+  border: 2px solid #ffd700;
+  border-radius: 14px;
+}
+.levelup-title {
+  font-size: 26px;
+  font-weight: 800;
+  color: #d48806;
+}
+.levelup-level {
+  margin-top: 6px;
+  font-size: 16px;
+  color: #6b4e00;
 }
 
 /* T045：掌握徽章浮窗（居中印章） */

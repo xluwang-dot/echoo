@@ -168,7 +168,7 @@ export function getDueWords(db: DatabaseSync, userId: number): VocabState[] {
 }
 
 // ---------- 测试模式（T028，需求 §3.3 测试模式）----------
-export type TestScope = "all" | "near" | "fail" | "mastered";
+export type TestScope = "all" | "near" | "fail" | "mastered" | "levelup"; // T053b
 
 interface VocabPair {
   word_id: number;
@@ -573,4 +573,90 @@ export function getUserLevel(db: DatabaseSync, userId: number): number {
 // 升级解锁：level 1~4
 export function updateUserLevel(db: DatabaseSync, userId: number, level: number): void {
   db.prepare("UPDATE users SET level = ? WHERE id = ?").run(level, userId);
+}
+
+// ---------- 升级测试（T053b）----------
+// 最近 N 轮练习（mode=practice）的句子正确率：句子正确 = 句内所有词 result=mastered
+export function getRecentPracticeAccuracy(db: DatabaseSync, userId: number, rounds = 3): number[] {
+  const sessions = db
+    .prepare(
+      "SELECT id FROM practice_sessions WHERE user_id=? AND mode='practice' ORDER BY id DESC LIMIT ?"
+    )
+    .all(userId, rounds) as { id: number }[];
+  const accs: number[] = [];
+  for (const s of sessions.reverse()) {
+    const recs = db
+      .prepare("SELECT sentence_id, result FROM test_records WHERE session_id=?")
+      .all(s.id) as { sentence_id: number; result: string }[];
+    const bySent = new Map<number, string[]>();
+    for (const r of recs) {
+      const arr = bySent.get(r.sentence_id) ?? [];
+      arr.push(r.result);
+      bySent.set(r.sentence_id, arr);
+    }
+    const correct = [...bySent.values()].filter((rs) => rs.every((x) => x === "mastered")).length;
+    accs.push(bySent.size ? correct / bySent.size : 0);
+  }
+  return accs;
+}
+
+// 升级测试邀请：最近 3 轮全部 ≥80%
+export function isLevelTestReady(db: DatabaseSync, userId: number, rounds = 3, threshold = 0.8): boolean {
+  const accs = getRecentPracticeAccuracy(db, userId, rounds);
+  return accs.length >= rounds && accs.every((a) => a >= threshold);
+}
+
+// 升级测试抽句：①当前级未练习 → ②未掌握词句对 → ③全掌握自动解锁下一级并抽下一级
+export function drawLevelupSentenceIds(
+  db: DatabaseSync,
+  userId: number,
+  targetCount: number
+): { sentenceIds: number[]; autoLevelUp: boolean } {
+  const level = getUserLevel(db, userId);
+  const lvMap = new Map<number, number | null>();
+  for (const r of db.prepare("SELECT id, level FROM sentences").all() as { id: number; level: number | null }[]) {
+    lvMap.set(r.id, r.level);
+  }
+  const lvOf = (id: number) => lvMap.get(id) ?? null;
+  // ① 当前级未练习句
+  const untested = getUntestedSentenceIds(db, userId).filter((id) => lvOf(id) === level);
+  if (untested.length > 0) {
+    return { sentenceIds: sample(untested, targetCount), autoLevelUp: false };
+  }
+  // ② 当前级未掌握词句对（user_vocab learning）
+  const learning = db
+    .prepare(
+      `SELECT DISTINCT v.sentence_id FROM user_vocab v
+       JOIN words w ON w.id = v.word_id
+       WHERE v.user_id=? AND v.status='learning' AND w.level=?`
+    )
+    .all(userId, level) as { sentence_id: number }[];
+  if (learning.length > 0) {
+    return { sentenceIds: sample(learning.map((r) => r.sentence_id), targetCount), autoLevelUp: false };
+  }
+  // ③ 全掌握 → 自动解锁下一级 + 抽下一级句
+  if (level < 4) {
+    updateUserLevel(db, userId, level + 1);
+    const next = db
+      .prepare("SELECT id FROM sentences WHERE level = ?")
+      .all(level + 1) as { id: number }[];
+    return { sentenceIds: sample(next.map((r) => r.id), targetCount), autoLevelUp: true };
+  }
+  return { sentenceIds: [], autoLevelUp: false };
+}
+
+// 升级测试通过判定：该 session 句子正确率 ≥60%
+export function isLevelUpPassed(db: DatabaseSync, sessionId: number, threshold = 0.6): boolean {
+  const recs = db
+    .prepare("SELECT sentence_id, result FROM test_records WHERE session_id=?")
+    .all(sessionId) as { sentence_id: number; result: string }[];
+  const bySent = new Map<number, string[]>();
+  for (const r of recs) {
+    const arr = bySent.get(r.sentence_id) ?? [];
+    arr.push(r.result);
+    bySent.set(r.sentence_id, arr);
+  }
+  if (bySent.size === 0) return false;
+  const correct = [...bySent.values()].filter((rs) => rs.every((x) => x === "mastered")).length;
+  return correct / bySent.size >= threshold;
 }

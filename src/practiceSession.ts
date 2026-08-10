@@ -1,7 +1,7 @@
 // 练习会话状态机（T010，内存存储）
 // 每个登录用户同时只有一个进行中的练习会话。
 import type { DatabaseSync } from "node:sqlite";
-import { drawSession, drawTestSentenceIds, startSession, type DrawConfig, type TestScope } from "./practice.js";
+import { drawSession, drawTestSentenceIds, startSession, drawLevelupSentenceIds, isLevelUpPassed, type DrawConfig, type TestScope } from "./practice.js";
 
 export interface SessionState {
   sessionId: number;
@@ -39,7 +39,9 @@ export function createSession(
   const { mode = "practice", scope = "all", ...drawConfig } = config ?? {};
   const sentenceIds =
     mode === "test"
-      ? drawTestSentenceIds(db, userId, targetCount, scope)
+      ? scope === "levelup"
+        ? drawLevelupSentenceIds(db, userId, targetCount).sentenceIds // T053b：升级测试
+        : drawTestSentenceIds(db, userId, targetCount, scope)
       : drawSession(db, userId, targetCount, drawConfig);
   const sessionId = startSession(db, userId, targetCount, mode);
   const state: SessionState = {

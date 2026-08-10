@@ -4,7 +4,7 @@ import { Router, Request, Response, NextFunction } from "express";
 import type { DatabaseSync } from "node:sqlite";
 import { getDb } from "../db.js";
 import { requireAuth } from "./auth.js";
-import { getSentenceWithTokens, completeSentence, getDueCount, aggregateVocabState, getDueWords, getMasteryCount, getUserLevel } from "../practice.js";
+import { getSentenceWithTokens, completeSentence, getDueCount, aggregateVocabState, getDueWords, getMasteryCount, getUserLevel, updateUserLevel, isLevelUpPassed, isLevelTestReady } from "../practice.js";
 import { wordState, sentenceDone } from "../checker.js";
 import { createSession, getSession, clearSession, elapsedMs } from "../practiceSession.js";
 import { finishSession as persistSession } from "../practice.js";
@@ -64,7 +64,7 @@ export function practiceRouter(db?: DatabaseSync): Router {
     const m = req.body?.mode;
     const mode = m === "review" || m === "test" ? m : "practice";
     // 测试范围（T028）
-    const scope = ["all", "near", "fail", "mastered"].includes(req.body?.scope) ? req.body.scope : "all";
+    const scope = ["all", "near", "fail", "mastered", "levelup"].includes(req.body?.scope) ? req.body.scope : "all"; // T053b
     // T037：立即复习必含的句子（当前练习入本句）
     const includeRaw = req.body?.includeSentenceIds;
     const includeSentenceIds =
@@ -224,7 +224,15 @@ export function practiceRouter(db?: DatabaseSync): Router {
     if (done) {
       persistSession(database, state.sessionId, state.sentenceIds.length, elapsedMs(state));
       clearSession(req.session.userId!);
-      res.json({ done: true, masteredWordIds, masteryCount });
+      // T053b：升级测试通过判定（句子正确率 ≥60% → 解锁下一级）
+      let levelUp = false;
+      let newLevel: number | undefined;
+      if (state.scope === "levelup" && isLevelUpPassed(database, state.sessionId)) {
+        levelUp = true;
+        newLevel = getUserLevel(database, req.session.userId!) + 1;
+        updateUserLevel(database, req.session.userId!, newLevel);
+      }
+      res.json({ done: true, masteredWordIds, masteryCount, levelUp, newLevel });
     } else {
       const cur = getSentenceWithTokens(database, state.sentenceIds[state.idx], req.session.userId!)!;
       skipNameWords(state, cur.tokens);
@@ -258,6 +266,16 @@ export function practiceRouter(db?: DatabaseSync): Router {
     persistSession(database, state.sessionId, state.idx, elapsedMs(state));
     clearSession(req.session.userId!);
     res.json({ ok: true, done: state.idx });
+  });
+
+  // T053b：升级测试状态（等级 + 邀请是否激活 + 规则）
+  router.get("/levelup-status", requireAuth, (req, res) => {
+    const level = getUserLevel(database, req.session.userId!);
+    res.json({
+      level,
+      ready: isLevelTestReady(database, req.session.userId!),
+      rule: "连续 3 轮练习正确率 ≥80% 可发起升级测试；测试 20 句、无提示、限时、正确率 ≥60% 通过",
+    });
   });
 
   // 到期复习数量（T029，§4.1 登录到期横幅）

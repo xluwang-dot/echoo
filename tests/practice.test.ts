@@ -21,6 +21,9 @@ import {
   getDueReviewSentenceIds,
   drawTestSentenceIds,
   getDueCount,
+  getRecentPracticeAccuracy,
+  isLevelTestReady,
+  drawLevelupSentenceIds,
   getUserLevel,
   updateUserLevel,
 } from "../src/practice.js";
@@ -725,5 +728,72 @@ describe("T053a 用户等级抽取（level 过滤 + 混合 1:1）", () => {
     expect(getUserLevel(db, userA)).toBe(1);
     updateUserLevel(db, userA, 2);
     expect(getUserLevel(db, userA)).toBe(2);
+  });
+});
+
+describe("T053b 升级测试（正确率/邀请/三级抽词/升级判定）", () => {
+  beforeEach(() => {
+    db.exec("DELETE FROM test_records; DELETE FROM practice_sessions; DELETE FROM user_vocab; DELETE FROM word_status; DELETE FROM sentence_words; DELETE FROM sentences; DELETE FROM words;");
+    db.prepare("UPDATE users SET level=1").run(); // 重置等级（防跨 describe 污染）
+    // 1 级 3 句 + 2 级 1 句
+    for (const [en, lv] of [["foo bar.", 1], ["baz qux.", 1], ["quux corge.", 1], ["grault garply.", 2]] as const) {
+      const sid = db.prepare("INSERT INTO sentences (en, zh, level) VALUES (?,?,?)").run(en, "T053b。", lv).lastInsertRowid as number;
+      const wid = db.prepare("INSERT INTO words (word, level) VALUES (?,?)").run(en.split(" ")[0], lv).lastInsertRowid as number;
+      db.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(sid, wid, 0, 0);
+    }
+  });
+
+  const sidOf = (word: string) => (db.prepare("SELECT id FROM sentences WHERE en LIKE ?").get(word + "%") as { id: number }).id;
+  const widOf = (word: string) => (db.prepare("SELECT id FROM words WHERE word=?").get(word) as { id: number }).id;
+
+  it("getRecentPracticeAccuracy：句子正确率（句内全 mastered 才算对）", () => {
+    // 一轮练习 3 句：2 句全对 + 1 句 hint → 66.7%
+    const sess = startSession(db, userA, 3);
+    completeSentence(db, sess, userA, sidOf("foo"), [{ wordId: widOf("foo"), result: "mastered" }]);
+    completeSentence(db, sess, userA, sidOf("baz"), [{ wordId: widOf("baz"), result: "mastered" }]);
+    completeSentence(db, sess, userA, sidOf("quux"), [{ wordId: widOf("quux"), result: "hint" }]);
+    finishSession(db, sess, 3, 1000);
+    const accs = getRecentPracticeAccuracy(db, userA, 3);
+    expect(accs).toEqual([2 / 3]);
+  });
+
+  it("isLevelTestReady：3 轮全 ≥80% 才达标", () => {
+    // 3 轮全对
+    for (let r = 0; r < 3; r++) {
+      const sess = startSession(db, userA, 3);
+      completeSentence(db, sess, userA, sidOf("foo"), [{ wordId: widOf("foo"), result: "mastered" }]);
+      completeSentence(db, sess, userA, sidOf("baz"), [{ wordId: widOf("baz"), result: "mastered" }]);
+      completeSentence(db, sess, userA, sidOf("quux"), [{ wordId: widOf("quux"), result: "mastered" }]);
+      finishSession(db, sess, 3, 1000);
+    }
+    expect(isLevelTestReady(db, userA)).toBe(true);
+    // 第 4 轮含 hint → 最近 3 轮含低正确率 → 不达标
+    const sess = startSession(db, userA, 3);
+    completeSentence(db, sess, userA, sidOf("foo"), [{ wordId: widOf("foo"), result: "mastered" }]);
+    completeSentence(db, sess, userA, sidOf("baz"), [{ wordId: widOf("baz"), result: "hint" }]);
+    completeSentence(db, sess, userA, sidOf("quux"), [{ wordId: widOf("quux"), result: "mastered" }]);
+    finishSession(db, sess, 3, 1000);
+    expect(isLevelTestReady(db, userA)).toBe(false);
+  });
+
+  it("drawLevelupSentenceIds：优先抽当前级未练习句", () => {
+    // 1 级 3 句未练 → 抽 1 级句
+    const { sentenceIds } = drawLevelupSentenceIds(db, userA, 3);
+    expect(sentenceIds.length).toBe(3);
+    expect(sentenceIds.every((id) => [sidOf("foo"), sidOf("baz"), sidOf("quux")].includes(id))).toBe(true);
+  });
+
+  it("drawLevelupSentenceIds：练完后抽未掌握，全掌握自动解锁下一级", () => {
+    // 练完 1 级 3 句（全 mastered 但不到 candidate，未掌握）
+    const sess = startSession(db, userA, 3);
+    completeSentence(db, sess, userA, sidOf("foo"), [{ wordId: widOf("foo"), result: "mastered" }]);
+    completeSentence(db, sess, userA, sidOf("baz"), [{ wordId: widOf("baz"), result: "mastered" }]);
+    completeSentence(db, sess, userA, sidOf("quux"), [{ wordId: widOf("quux"), result: "mastered" }]);
+    finishSession(db, sess, 3, 1000);
+    // 未测试耗尽 → 抽未掌握（learning 词句对，但这里词未入本 → 全掌握判定）
+    const r = drawLevelupSentenceIds(db, userA, 2);
+    expect(r.autoLevelUp).toBe(true); // 无 learning 词句对 → 视为全掌握 → 解锁
+    expect(getUserLevel(db, userA)).toBe(2);
+    expect(r.sentenceIds.every((id) => id === sidOf("grault"))).toBe(true); // 抽 2 级句
   });
 });
