@@ -1,88 +1,36 @@
 # AGENTS.md
 
-在线背单词平台（从英语打字/背词方向演进）。素材与需求已就绪，**平台代码未开始**；仍非 git 仓库、无构建工具。
+在线背单词平台（echoo）：深圳中考真题句子为素材，听写句子定位生词。后端 TS + 前端 Vue 均已实现并已部署。需求文档 `docs/requirements.md`（当前 v2.1）为开发依据，开始前先读。
 
-## 需求文档（开发依据）
+## 开发命令
 
-- `docs/requirements.md`：平台需求，v1.0 已基本定稿，开发前先读。核心设计：**抽取句子→给汉译+播语音→逐字符拼写（大小写一致）→拼对记已掌握、点「提示词」则词+句入生词本**；生词本条目=「单词+所在句子」多对多；无拼错/放弃概念；练习会话计时；报告句子有误。
-- 技术栈已定规划（**均未实现**）：数据库 SQLite；TTS 拟用 mimo-v2.5-tts（单端，女生音色），单词发音=句子音频按词时间戳切片。前端/后端/部署形态待定（见 §7）。
-- 素材侧待办：`study_sentences.md` 的句子质量差（含 OCR 噪声/残缺），入库前需清洗、去重、补汉译（机器翻译）。
+- 后端 dev：`npm run dev`（tsx src/index.ts，端口 3008）
+- 前端 dev：`npm run dev:web`（vite 端口 5173，代理 /api → 3008）
+- 一键起停：`./start.sh dev`（开发） / `./start.sh`（生产：build 后在 3008 单端口托管 web/dist + API）
+- 测试：`npm test`（vitest，globals 开，匹配 `tests/**/*.test.ts`）；watch：`npm run test:watch`
+- 类型检查：后端 `npm run typecheck`（tsc --noEmit）；前端 `npm run typecheck --prefix web`（vue-tsc --noEmit）
+- 构建：后端 `npm run build`（tsc → dist/）；前端 `npm run build --prefix web`（vue-tsc -b && vite build → web/dist）
+- **Node ≥ 22**：后端用内置 `node:sqlite`（实验特性），启动打印 ExperimentalWarning 属正常
 
-## 数据源与产物（T001/T002 生成，勿手工大改）
+## 架构要点
 
-- `res/papers_md/YYYY.md`：2015–2025 各年真题 Markdown（上游原始数据，统计来源）。`images/<年份>/` 存放配图（14 张），相对路径引用。
-- `res/highfrequency_vocabulary.md`：深圳中考高频词表，1425 词，由真题统计生成，**不要手工大改；改数据不如重新生成**。
-- `res/vocabulary_full.md`：**2498 词**全量词表（含多种词形独立词条，如 `carried`/`carry`）。
-- `res/word_freq.json`：词频统计结果。
-- `res/study_sentences.md`：记忆素材（T002 产物，按词索引，correct 词用 `**词**` 标记）。**句子是真题 OCR 噪声文本，不完整，平台入库前需清洗**。
+- 入口 `src/index.ts`：启动时建库 + 空库自动 seed，然后挂 HTTP（挂在 3008）。
+- `src/db.ts`：`initDb` + 轻量迁移——`MIGRATIONS` 数组对旧库自动 `ALTER TABLE` 补列。**改表结构时务必同时追加迁移条目**，否则线上旧库缺列。
+- `src/practice.ts`（核心业务 ~668 行，无 HTTP）：抽取、SM-2 复习调度、掌握判定、结果落库；逐字符拼写判定纯函数在 `checker.ts`；练习会话为**服务端权威**状态机，存内存（`practiceSession.ts`）——重启即丢登录态与会话。
+- `src/routes/`（auth/practice/audio/vocab）：HTTP 薄层，逻辑复用 practice.ts/vocab.ts。
+- schema 在 `src/db/schema.ts`；`TABLES` / `EXPECTED_COLUMNS` 供测试核对。
+- 前端 `web/src/views/`（Login/Practice/Vocab/Settings），`web/src/api.ts` 封装 session-cookie API；vue-router history 模式（生产单页回退已在 `src/index.ts` 实现，勿手动加哈希路由）。
 
-## 脚本与测试
+## 数据与素材（重要）
 
-- `scripts/word_freq.py`：真题词频统计（`extract_body`/`parse_vocab`/`build_lemmatizer`/`TOKEN_RE`/`FUNCTIONAL` 被复用）。**ROOT 为硬编码绝对路径**，移动脚本前需改。
-- `scripts/vocab_gen.py`：生成词表。
-- `scripts/sentence_extract.py`：T002 考题句子提取，`generate_study_sentences()` 产出 `res/study_sentences.md`。
-- 测试：`python3 -m unittest discover -s tests`（当前 45 个全绿）。修改功能前先写测试为主（强 TDD 惯例见 task 惯例见 tasker）。
+- 运行时数据 `data/`（git 排除）：`word_typer.db` + `data/audio/*.wav`，**二进制不入库**，靠本地拷贝带到部署机。
+- 空库自动 seed 读 `res/sentence_pool.json`（默认相对 CWD）。池结构：`meta{source,count}` + `sentences[]`（en/zh/round/topic/section/tokens/bold）。
+- **`res/`、`scripts/`、`tts_service/` 均被 git 排除且当前本机不存在**：全新 clone 无法 seed——`tests/seed.test.ts` 8 例因此必挂（其余 149 例绿）；冷启动空库 `npm run dev` 也会因读不到 pool 失败。重建种子/音频需从内容生产机拷贝这两个目录（见 README）。
+- 池规模：1405 句、2378 词（唯一词形）、10687 个 sentence_words；`audio.word_offsets` 暂未使用。
+- 内容分级（T047/T053）：words 有 level/meaning/phonetic/audio_path（词发音，路径相对项目根或绝对）；sentences 有 prev_en/next_en（对话语境提示）；用户有 level 与 `levelup_history` 表。`user_vocab` 主键 (user_id, word_id, sentence_id) —— 生词本条目 = 「单词+句子」多对多。
 
-## 词表数据格式（解析时注意）
+## 约定
 
-- 换行符**混合**：285 行以 `  \r\n` 结尾（两空格 + CRLF，集中在部分词头/词频/例句行），其余为 LF —— 解析器必须剥离 `\r` 与尾随空格。
-- 单词区块结构：
-  - `### <word>`：词头，全部为小写字母（`^### [a-z]+$`），无重复。
-  - `词频：N 次 | 出现年份：2015、2016、…`：年份用顿号分隔。
-  - 例句行：`1. … (2018)`，每条以 `(年份)` 结尾，每词最多 3 条。
-- 部分词**没有例句**，该位置是一行提示语 `(该词主要出现在选项词或短语中，无合适的完整例句)`；全表共 735 个词例句不足 3 条。
-- 例句文本是真题 OCR 噪声文本：含题号/选项碎片（如 `42.What…`、`( )` 占位符）、无空格粘连、全半角括号混用、错字（如 `itf ell`、`Al`=AI）。不要假设例句是干净句子。
-- 文件末尾有 `---` 统计信息块，不要算进例句。
-
-## 真题数据格式（解析时注意）
-
-- 各年份**头部/来源不统一**：2015/2017/2018 为官方卷，2019 标注「回忆版」，2020 为「学而思培优答案及解析」，2021 起为学业水平考试卷 —— 不要假设各文件结构一致。
-- 选择题占位符为 `(   ) N.`，完形/语法填空正文内以数字编号留空（如 `16    seemed`），正文可能被选项行断开。
-- 图片仅出现在部分年份与题型（阅读配图、信息匹配选项），引用为相对路径。
-- 全部年份**均无听力内容**（2025 中的「听力」只出现在答案解析的单词注释里）。
-
-## 惯例
-
-- 代码与注释使用中文。
+- 代码与注释用中文。
+- 提交信息带任务号：`feat:|fix:|docs:|chore: … (T###)`，bug 沿 `B0009` 这种编号（tasker/ 工作流目录已被 git 排除，本机亦不存在）。
 - 克隆/下载外部仓库一律用 SSH（`git@github.com:…`）。
-
-## 开发工作流（tasker/ 目录）
-
-所有开发任务必须遵循「来源可溯 → 方案审核 → 执行 → 验证闭环」。
-
-### 文件结构
-
-```
-tasker/
-├── buglist.md     # Bug 记录，编号 B0001/B0002...
-├── tasker.md      # 任务总览索引
-├── ideas.md       # 创意池（未经评估的原始创意）
-└── tasks/         # 单个任务实施方案
-    └── T001.md
-```
-
-### 创意池（ideas.md）
-
-`ideas.md` 是创意池，存放未经评估的原始创意。条目不分配 ID，不设优先级，不直接作为任务来源。
-
-- 创意确认实施时，先转化为 `tasker.md` 中的正式需求（分配 T 编号），然后在 `ideas.md` 中移至「已转化」表格并注明对应 T 编号。
-- 放弃的创意移至「已放弃」表格，注明放弃原因。
-
-### 任务流程
-
-1. **来源**：所有任务必须有明确来源 — `buglist.md` 中的 Bug ID，或 tasker.md 中标注「用户需求」。无来源任务拒绝执行。
-2. **创建**：在 `tasker.md` 新增行（编号 T 自动递增），填写优先级（PX 暂未定级 / P0-P3），状态「待审核」。
-3. **方案**：在 `tasks/T{编号}.md` 中草拟实施方案（需求摘要 + 涉及文件 + 修改思路 + 不做修改的部分）。方案未经审核确认，绝不改代码。
-4. **审核**：用户在方案文档中填写审核意见，状态改为「已确认」。
-5. **实施**：按方案修改代码，完成后填写实施详情和功能验证自检清单，状态「已完成」。
-6. **提交**：验证通过后，经用户同意执行 `git commit`。提交信息含任务编号（如 `feat: ... (T001)`）。提交哈希记入方案文档。
-7. **更新**：tasker.md 状态更新为「已完成」并填写完成时间；同步更新 buglist.md 的「已修复」表。
-
-### 行为准则
-
-- 接受任务前先检查来源 ID 是否存在
-- 执行中需偏离方案时必须重新走审核
-- **先测试再编码**：所有功能修改必须先编写测试用例，测试通过后再实现功能代码（测试驱动开发）
-- 完成后必须功能验证自检，结果写入文档
-- 提交代码前必须获得用户同意
-- 不主动提交或推送代码
