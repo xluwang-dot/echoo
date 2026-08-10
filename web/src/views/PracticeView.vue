@@ -1077,8 +1077,7 @@ onUnmounted(() => {
   justify-content: center;
   align-items: center; /* T042：input-card(fit-content) 水平居中，短句不再靠左 */
   transform: translateY(-12%);
-  max-height: 78vh; /* T051：极长句滚动兜底 */
-  overflow-y: auto;
+  overflow: hidden auto; /* T051：纵向滚动兜底，横向禁止（防滚动条） */
 }
 .input-card {
   background: #fff;
