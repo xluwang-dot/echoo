@@ -2,8 +2,8 @@
 # word-typer 启动脚本：先停旧进程，再启动后端 + 前端（T019）
 # 用法：
 #   ./start.sh         默认生产环境：build（tsc + vite build）→ node dist/index.js，
-#                      单端口 3000 同时服务前端静态 + API（局域网部署形态）
-#   ./start.sh dev     开发环境：npm run dev（3000）+ npm run dev:web（5173，vite 代理 /api）
+#                      单端口 3008 同时服务前端静态 + API（局域网部署形态）
+#   ./start.sh dev     开发环境：npm run dev（3008）+ npm run dev:web（5173，vite 代理 /api）
 set -u
 cd "$(dirname "$0")"
 
@@ -26,14 +26,14 @@ mkdir -p logs
 
 if [ "$MODE" = "dev" ]; then
   echo "==> 启动开发环境"
-  echo "    后端: npm run dev      → http://localhost:3000"
+  echo "    后端: npm run dev      → http://localhost:3008"
   echo "    前端: npm run dev:web  → http://localhost:5173 (vite 代理 /api)"
   nohup npm run dev     > logs/backend.log  2>&1 &
   nohup npm run dev:web > logs/frontend.log 2>&1 &
   sleep 5
   echo "==> 健康检查"
-  if curl -s http://localhost:3000/health | grep -q '"ok":true'; then
-    echo "    后端 OK → http://localhost:3000"
+  if curl -s http://localhost:3008/health | grep -q '"ok":true'; then
+    echo "    后端 OK → http://localhost:3008"
   else
     echo "    ⚠️ 后端健康检查失败，请查看 logs/backend.log"
   fi
@@ -41,16 +41,16 @@ if [ "$MODE" = "dev" ]; then
 else
   echo "==> 构建生产产物（npm run build + 前端 vite build）"
   npm run build && npm run build --prefix web || { echo "构建失败，请检查报错"; exit 1; }
-  echo "==> 启动生产（node dist/index.js，单端口 3000）"
+  echo "==> 启动生产（node dist/index.js，单端口 3008）"
   nohup npm run start > logs/backend.log 2>&1 &
   sleep 3
   echo "==> 健康检查"
-  if curl -s http://localhost:3000/health | grep -q '"ok":true'; then
-    echo "    后端 OK → http://localhost:3000"
+  if curl -s http://localhost:3008/health | grep -q '"ok":true'; then
+    echo "    后端 OK → http://localhost:3008"
   else
     echo "    ⚠️ 后端健康检查失败，请查看 logs/backend.log"
   fi
-  curl -s -o /dev/null -w "    首页 http://localhost:3000 → HTTP %{http_code}\n" http://localhost:3000/
+  curl -s -o /dev/null -w "    首页 http://localhost:3008 → HTTP %{http_code}\n" http://localhost:3008/
 fi
 
 echo ""

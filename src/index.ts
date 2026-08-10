@@ -10,7 +10,7 @@ import { practiceRouter } from "./routes/practice.js";
 import { audioRouter } from "./routes/audio.js";
 import { vocabRouter } from "./routes/vocab.js";
 
-const PORT = Number(process.env.PORT ?? 3000);
+const PORT = Number(process.env.PORT ?? 3008);
 
 const db = initDb(DB_PATH);
 // T006：空库自动 seed（句子池就绪即服务可用）
@@ -29,7 +29,7 @@ app.use("/api/practice", practiceRouter());
 app.use("/api/audio", audioRouter());
 app.use("/api/vocab", vocabRouter());
 
-// T019：生产静态托管（web/dist 存在时，单端口 3000 同时服务前端 + API）
+// T019：生产静态托管（web/dist 存在时，单端口 3008 同时服务前端 + API）
 const WEB_DIST = path.join(import.meta.dirname, "..", "web", "dist");
 if (fs.existsSync(WEB_DIST)) {
   app.use(express.static(WEB_DIST));

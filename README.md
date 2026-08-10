@@ -65,8 +65,8 @@ npm run dev          # 首次启动会自动建库/补种子
 ### 启动（开发）
 
 ```bash
-npm run dev          # 后端，http://localhost:3000
-npm run dev:web      # 前端，http://localhost:5173（vite 代理 /api → 3000）
+npm run dev          # 后端，http://localhost:3008
+npm run dev:web      # 前端，http://localhost:5173（vite 代理 /api → 3008）
 ```
 
 浏览器打开 `http://localhost:5173`，注册账号后即可开始练习。
