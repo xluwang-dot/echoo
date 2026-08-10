@@ -368,8 +368,8 @@ async function finishSentence() {
   const hadHint = wordResults.some((w) => w.result === "hint" || w.result === "test_fail");
   streak.value = hadHint ? 0 : streak.value + 1;
 
-  // 奖励特效：纸屑 + 里程碑庆祝
-  createConfetti(streak.value >= 5 && streak.value % 5 === 0 ? 80 : 40);
+  // 奖励特效：纸屑 + 里程碑庆祝（T057：每句 15 个轻量，大节点才 80/120）
+  createConfetti(streak.value >= 5 && streak.value % 5 === 0 ? 80 : 15);
 
   // 滑动翻页：当前句向左滑出
   slideState.value = "exit";
@@ -619,18 +619,20 @@ async function playSentence() {
 // 彩色纸屑奖励特效
 const CONFETTI_COLORS = ["#ff6b6b", "#4ecdc4", "#45b7d1", "#96ceb4", "#ffeaa7", "#dda0dd", "#ff9ff3", "#48dbfb", "#feca57"];
 function createConfetti(count = 40, colors: string[] = CONFETTI_COLORS) {
+  // T057 调试：?noconfetti 参数禁用粒子特效（验证左侧色块是否特效所致）
+  if (window.location.search.includes("noconfetti")) return;
   const container = document.querySelector(".confetti-container");
   if (!container) return;
   for (let i = 0; i < count; i++) {
     const p = document.createElement("div");
     p.className = "confetti-particle";
-    p.style.left = (45 + Math.random() * 10) + "%"; // 中心小范围爆发（T057：避免堆到左侧边缘）
+    p.style.left = (48 + Math.random() * 4) + "%"; // 中心 ±2%（T057：杜绝左侧聚集）
     p.style.top = "45%";
     p.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
     p.style.width = (4 + Math.random() * 5) + "px";
     p.style.height = (4 + Math.random() * 5) + "px";
-    p.style.setProperty("--tx", ((Math.random() - 0.5) * 360) + "px"); // ±180px
-    p.style.setProperty("--ty", (-(Math.random() * 320 + 80)) + "px");
+    p.style.setProperty("--tx", ((Math.random() - 0.5) * 240) + "px"); // ±120px
+    p.style.setProperty("--ty", (-(Math.random() * 260 + 60)) + "px");
     p.style.setProperty("--tr", (Math.random() * 1080) + "deg");
     p.style.setProperty("--dur", (0.8 + Math.random() * 0.8) + "s");
     p.style.setProperty("--del", (Math.random() * 0.15) + "s");
