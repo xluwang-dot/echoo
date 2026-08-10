@@ -10,6 +10,7 @@ export interface UserRow {
   password_hash: string;
   nickname: string | null;
   preferences: string | null;
+  level: number; // T053a
 }
 
 export function hashPassword(plain: string): string {

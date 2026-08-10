@@ -195,3 +195,9 @@ describe("T005 schema", () => {
     // 无用户则略过默认值断言（仅验证列存在与默认）
     expect(cols).toContain("level");
   });
+
+  it("迁移：levelup_history 表存在（T053c）", () => {
+    resetDb(TEST_DB);
+    const t = new DatabaseSync(TEST_DB).prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='levelup_history'").get();
+    expect(t).toBeTruthy();
+  });

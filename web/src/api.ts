@@ -94,6 +94,12 @@ export const api = {
     req<{ id: number }>("POST", "/api/auth/login", { username, password }),
   logout: () => req<{ ok: boolean }>("POST", "/api/auth/logout", {}),
   me: () => req<{ id: number; username: string; nickname: string; preferences: Record<string, unknown> }>("GET", "/api/auth/me"),
+  footprint: () =>
+    req<{
+      user: { username: string; nickname: string | null; level: number };
+      days: Record<string, { practice: number; review: number; test: number; levelup: number }>;
+      stats: { vocabCount: number; masteredCount: number };
+    }>("GET", "/api/auth/footprint"),
   updatePreferences: (preferences: Record<string, unknown>) =>
     req<{ id: number; username: string; nickname: string; preferences: Record<string, unknown> }>("POST", "/api/auth/preferences", preferences),
 

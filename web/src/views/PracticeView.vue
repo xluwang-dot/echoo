@@ -748,6 +748,7 @@ onUnmounted(() => {
         <span class="title">背单词 · 听写</span>
         <div class="topbar-right">
           <span v-if="streak >= 3" class="streak-badge">🔥 连击 ×{{ streak }}</span>
+          <button class="ghost" @click="router.push('/settings')">⚙️ 设置</button>
           <button class="ghost" @click="onLogout">退出</button>
         </div>
       </div>

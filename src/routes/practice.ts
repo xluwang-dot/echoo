@@ -229,8 +229,13 @@ export function practiceRouter(db?: DatabaseSync): Router {
       let newLevel: number | undefined;
       if (state.scope === "levelup" && isLevelUpPassed(database, state.sessionId)) {
         levelUp = true;
-        newLevel = getUserLevel(database, req.session.userId!) + 1;
+        const fromLevel = getUserLevel(database, req.session.userId!);
+        newLevel = fromLevel + 1;
         updateUserLevel(database, req.session.userId!, newLevel);
+        // T053c：记录升级历史（足迹/勋章用）
+        database
+          .prepare("INSERT INTO levelup_history (user_id, from_level, to_level, time) VALUES (?, ?, ?, ?)")
+          .run(req.session.userId!, fromLevel, newLevel, new Date().toISOString());
       }
       res.json({ done: true, masteredWordIds, masteryCount, levelUp, newLevel });
     } else {

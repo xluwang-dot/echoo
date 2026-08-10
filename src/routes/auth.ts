@@ -76,5 +76,39 @@ export function authRouter(db?: DatabaseSync): Router {
     res.json(toPublicUser(user));
   });
 
+// T053c：足迹（过去 7 天操作记录）+ 基本信息 + 勋章等级
+  router.get("/footprint", requireAuth, (req, res) => {
+    const userId = req.session.userId!;
+    const since = new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10); // 含今天共 7 天
+    const sessions = database
+      .prepare("SELECT mode, start_time FROM practice_sessions WHERE user_id=? AND start_time >= ?")
+      .all(userId, since) as { mode: string; start_time: string }[];
+    const ups = database
+      .prepare("SELECT from_level, to_level, time FROM levelup_history WHERE user_id=? AND time >= ?")
+      .all(userId, since) as { from_level: number; to_level: number; time: string }[];
+    const days: Record<string, { practice: number; review: number; test: number; levelup: number }> = {};
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
+      days[d] = { practice: 0, review: 0, test: 0, levelup: 0 };
+    }
+    for (const s of sessions) {
+      const d = s.start_time.slice(0, 10);
+      if (days[d]) days[d][s.mode === "review" ? "review" : s.mode === "test" ? "test" : "practice"] += 1;
+    }
+    for (const u of ups) {
+      const d = u.time.slice(0, 10);
+      if (days[d]) days[d].levelup += 1;
+    }
+    const user = findUserById(database, userId);
+    const vocabCount = database.prepare("SELECT COUNT(*) AS c FROM user_vocab WHERE user_id=?").get(userId) as { c: number };
+    const masteredCount = database.prepare("SELECT COUNT(*) AS c FROM user_vocab WHERE user_id=? AND status='mastered'").get(userId) as { c: number };
+    res.json({
+      user: { username: user?.username, nickname: user?.nickname, level: user?.level ?? 1 },
+      days,
+      stats: { vocabCount: vocabCount.c, masteredCount: masteredCount.c },
+    });
+  });
+
   return router;
 }
+

@@ -13,6 +13,7 @@ export const TABLES = [
   "practice_sessions",
   "test_records",
   "sentence_reports",
+  "levelup_history",
 ] as const;
 
 // 每表关键列（用于测试核对）
@@ -27,6 +28,7 @@ export const EXPECTED_COLUMNS: Record<string, string[]> = {
   practice_sessions: ["id", "user_id", "target_count", "start_time", "end_time", "done_count", "total_ms", "mode"],
   test_records: ["id", "session_id", "user_id", "word_id", "sentence_id", "time", "result"],
   sentence_reports: ["id", "sentence_id", "user_id", "time", "status"],
+  levelup_history: ["id", "user_id", "from_level", "to_level", "time"],
 };
 
 export const SCHEMA_SQL = `
@@ -132,6 +134,14 @@ CREATE TABLE IF NOT EXISTS test_records (
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE,
   FOREIGN KEY (sentence_id) REFERENCES sentences(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS levelup_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  from_level INTEGER NOT NULL,
+  to_level INTEGER NOT NULL,
+  time TEXT
 );
 
 CREATE TABLE IF NOT EXISTS sentence_reports (
