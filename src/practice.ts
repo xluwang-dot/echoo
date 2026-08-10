@@ -271,10 +271,12 @@ export function drawSession(
   }
 
   // 纯复习模式：只从生词本抽取（T027：到期优先；T037：include 必含）
+  // T068：复习不规避报告句——词已入生词本必须能复习（报告规避只用于新句池，防抽到问题新内容）
   if (reviewOnly) {
-    const due = getDueReviewSentenceIds(db, userId).filter((id) => !reported.has(id));
+    const reviewAll = getReviewSentenceIds(db, userId); // 生词本全量（含报告句）
+    const due = getDueReviewSentenceIds(db, userId);
     // T037：include 句（在生词本内）必含——立即复习必须包含当前练习入本句子，即使未到期
-    const include = (config.includeSentenceIds ?? []).filter((id) => review.includes(id) && !reported.has(id));
+    const include = (config.includeSentenceIds ?? []).filter((id) => reviewAll.includes(id));
     const result = include.slice(0, targetCount);
     // 再从到期队列补足（避免与 include 重复）
     for (const id of due) {
@@ -283,16 +285,8 @@ export function drawSession(
     }
     // 不足时从生词本其余句子补齐
     if (result.length < targetCount) {
-      const fill = review.filter((id) => !result.includes(id));
+      const fill = reviewAll.filter((id) => !result.includes(id));
       for (const id of fill) {
-        if (result.length >= targetCount) break;
-        result.push(id);
-      }
-    }
-    // 仍不足：被报告句子兜底（常规池耗尽才用）
-    if (result.length < targetCount) {
-      const fillReported = [...reported].filter((id) => !result.includes(id));
-      for (const id of fillReported) {
         if (result.length >= targetCount) break;
         result.push(id);
       }
