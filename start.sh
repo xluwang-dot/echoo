@@ -40,6 +40,11 @@ if [ "$MODE" = "dev" ]; then
   curl -s -o /dev/null -w "    前端 http://localhost:5173 → HTTP %{http_code}\n" http://localhost:5173/
 else
   echo "==> 构建生产产物（npm run build + 前端 vite build）"
+  # T060：确保前端依赖已安装（web/node_modules 不入 git，clone 后为空）
+  if [ ! -d web/node_modules ]; then
+    echo "==> 安装前端依赖（web/npm install，首次）..."
+    (cd web && npm install) || { echo "前端依赖安装失败，请检查网络"; exit 1; }
+  fi
   npm run build && npm run build --prefix web || { echo "构建失败，请检查报错"; exit 1; }
   echo "==> 启动生产（node dist/index.js，单端口 3008）"
   nohup npm run start > logs/backend.log 2>&1 &
