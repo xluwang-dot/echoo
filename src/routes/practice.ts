@@ -183,7 +183,7 @@ export function practiceRouter(db?: DatabaseSync): Router {
       return;
     }
     // 词 → word_id
-    const wrow = database.prepare("SELECT id FROM words WHERE word = ?").get(word) as { id: number } | undefined;
+    const wrow = database.prepare("SELECT id FROM words WHERE lower(word) = lower(?)").get(word) as { id: number } | undefined;
     if (wrow) {
       addVocab(database, req.session.userId!, wrow.id, sentence.id);
     }

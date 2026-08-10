@@ -527,13 +527,15 @@ export function getSentenceWithTokens(db: DatabaseSync, sentenceId: number, user
       )
     : new Set<number>();
 
+  // 句子原文词（保留大小写，如 I'm/English——words 表统一小写关联）
+  const enTokens = s.en.match(/[a-zA-Z]+(?:['’][a-zA-Z]+)*['’]*/g) ?? [];
   return {
     id: s.id,
     en: s.en,
     zh: s.zh,
     tokens: rows.map((r) => ({
       word_id: r.word_id,
-      word: r.word,
+      word: enTokens[r.position] ?? r.word, // B0009：用原文大小写（I'm 而非 i'm）
       is_name: r.is_name,
       is_bold: r.is_bold,
       in_vocab: vocabWordIds.has(r.word_id),

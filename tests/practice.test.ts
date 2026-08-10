@@ -797,3 +797,20 @@ describe("T053b 升级测试（正确率/邀请/三级抽词/升级判定）", (
     expect(r.sentenceIds.every((id) => id === sidOf("grault"))).toBe(true); // 抽 2 级句
   });
 });
+
+describe("B0009 句子 token 保留原文大小写", () => {
+  beforeEach(() => {
+    db.exec("DELETE FROM test_records; DELETE FROM practice_sessions; DELETE FROM user_vocab; DELETE FROM word_status; DELETE FROM sentence_words; DELETE FROM sentences; DELETE FROM words;");
+    sid1 = db.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("I'm afraid that I can't.", "B0009。").lastInsertRowid as number;
+    const widM = db.prepare("INSERT INTO words (word) VALUES (?)").run("i'm").lastInsertRowid as number;
+    const widA = db.prepare("INSERT INTO words (word) VALUES (?)").run("afraid").lastInsertRowid as number;
+    db.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(sid1, widM, 0, 0);
+    db.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?,?,?,?)").run(sid1, widA, 1, 0);
+  });
+
+  it("token.word 用句子原文大小写（I'm 而非 i'm）", () => {
+    const got = getSentenceWithTokens(db, sid1)!;
+    expect(got.tokens[0].word).toBe("I'm");
+    expect(got.tokens[1].word).toBe("afraid");
+  });
+});
