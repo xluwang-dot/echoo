@@ -10,6 +10,26 @@ export function audioRouter(db?: DatabaseSync): Router {
   const router = Router();
   const database = db ?? getDb();
 
+  // T047c：词发音音频（words.audio_path 引用，有道英音）
+  router.get("/word/:word", (req: Request, res: Response) => {
+    const word = String(req.params.word).toLowerCase();
+    const row = database
+      .prepare("SELECT audio_path FROM words WHERE lower(word) = ?")
+      .get(word) as { audio_path: string | null } | undefined;
+    if (!row?.audio_path) {
+      res.status(404).json({ error: "该词暂无音频" });
+      return;
+    }
+    const abs = path.isAbsolute(row.audio_path)
+      ? row.audio_path
+      : path.resolve(process.cwd(), row.audio_path);
+    if (!fs.existsSync(abs)) {
+      res.status(404).json({ error: "音频文件缺失" });
+      return;
+    }
+    res.type("audio/wav").sendFile(abs);
+  });
+
   router.get("/:sentenceId", (req: Request, res: Response) => {
     const sentenceId = Number(req.params.sentenceId);
     const row = database

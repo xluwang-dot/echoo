@@ -40,6 +40,29 @@ describe("T012 audio router", () => {
     app = express();
     app.use("/api/audio", audioRouter(db));
   });
+  // T047c：词音频路由（复用同库同 app）
+  beforeAll(() => {
+    const wid = db.prepare("INSERT INTO words (word, audio_path) VALUES (?, ?)").run("zzyheavily", path.join(tmpDir, "zzyheavily_uk.wav")).lastInsertRowid as number;
+    fs.writeFileSync(path.join(tmpDir, "zzyheavily_uk.wav"), fakeWav());
+    db.prepare("INSERT INTO words (word) VALUES (?)").run("zzyword");
+  });
+
+  it("词有音频 → 200 返回 wav", async () => {
+    const res = await request(app).get("/api/audio/word/zzyheavily");
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toContain("audio");
+  });
+
+  it("词无音频 → 404", async () => {
+    const res = await request(app).get("/api/audio/word/zzyword");
+    expect(res.status).toBe(404);
+  });
+
+  it("不存在的词 → 404", async () => {
+    const res = await request(app).get("/api/audio/word/notexistzzz");
+    expect(res.status).toBe(404);
+  });
+
   afterAll(() => {
     db.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -62,3 +85,4 @@ describe("T012 audio router", () => {
     expect(res.status).toBe(404);
   });
 });
+
