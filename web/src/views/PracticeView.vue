@@ -58,6 +58,15 @@ const wordConfirm = ref<{ word: string; wordId: number } | null>(null);
 // 间隔表格列（记忆曲线：1→3→7→16→35 天）
 const INTERVAL_COLS = [1, 3, 7, 16, 35];
 
+// T051：长句动态字号（不拆句，句子越长字号越小）
+const enSize = computed(() => {
+  const n = sentence.value?.en.split(/\s+/).length ?? 0;
+  if (n > 35) return "xl"; // 19px
+  if (n > 25) return "l"; // 21px
+  if (n > 15) return "m"; // 24px
+  return "s"; // 28px 默认
+});
+
 // T043：中文提示分阶段——练习完成后显示/复习一级提示后显示/测试永不显示
 const showZh = computed(() => {
   if (practiceMode.value === "test") return false;
@@ -720,7 +729,7 @@ onUnmounted(() => {
         </div>
         <div v-if="showZh" class="zh">{{ sentence?.zh }}</div>
         <div class="input-card">
-          <div class="en" :class="['mode-' + practiceMode, { flash: flashError, 'slide-exit': slideState === 'exit', 'slide-enter': slideState === 'enter' }]">
+          <div class="en" :class="['mode-' + practiceMode, 'size-' + enSize, { flash: flashError, 'slide-exit': slideState === 'exit', 'slide-enter': slideState === 'enter' }]">
             <span v-for="(seg, i) in segments" :key="i" :class="renderSegClass(seg)" @click="onWordClick(seg)">
               <template v-if="seg.type === 'word' && isActive(seg)">
                 <span class="typed">{{ typed }}</span><span class="blank">{{ blankRemain(seg) }}</span>
@@ -965,6 +974,8 @@ onUnmounted(() => {
   justify-content: center;
   align-items: center; /* T042：input-card(fit-content) 水平居中，短句不再靠左 */
   transform: translateY(-12%);
+  max-height: 78vh; /* T051：极长句滚动兜底 */
+  overflow-y: auto;
 }
 .input-card {
   background: #fff;
@@ -993,6 +1004,19 @@ onUnmounted(() => {
   white-space: pre-wrap;
   word-break: keep-all;
   overflow-wrap: anywhere; /* T038：超长/无空格粘连句可断行，避免 span 超宽导致居中向左溢出 */
+}
+/* T051：长句动态字号与行高（句子越长越小） */
+.en.size-m {
+  font-size: 24px;
+  line-height: 1.7;
+}
+.en.size-l {
+  font-size: 21px;
+  line-height: 1.6;
+}
+.en.size-xl {
+  font-size: 19px;
+  line-height: 1.5;
 }
 .en > span {
   display: inline-block;
