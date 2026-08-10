@@ -113,6 +113,7 @@ export const api = {
 
   // 音频（无需登录，句子素材共享）
   audioUrl: (sentenceId: number) => `/api/audio/${sentenceId}`,
+  wordAudioUrl: (word: string) => `/api/audio/word/${encodeURIComponent(word)}`, // T052
 
   // 生词本
   getVocab: () => req<{ vocab: VocabEntry[]; count: number }>("GET", "/api/vocab"),

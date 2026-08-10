@@ -438,19 +438,34 @@ function startTest(scope: "all" | "near" | "fail" | "mastered") {
   onStart("test", scope);
 }
 
-// T035：练习模式完成态点击单词 → 确认加入生词本
-function onWordClick(seg: Seg) {
-  if (practiceMode.value !== "practice" || !sentenceDoneWait.value) return; // 仅练习模式完成态
-  if (seg.type !== "word") return;
+// T052：播放单词发音（词音频端点）
+function playWordAudio(seg: Seg) {
   const t = sentence.value!.tokens[seg.ti!];
-  if (t.is_name === 1) return;
-  if (t.in_vocab) {
-    reportInfo.value = `「${t.word}」已在生词本`;
-    setTimeout(() => (reportInfo.value = ""), 1800);
+  if (!t) return;
+  if (!audioEl) audioEl = new Audio();
+  audioEl.src = api.wordAudioUrl(t.word);
+  audioEl.currentTime = 0;
+  audioEl.play().catch(() => {});
+}
+
+// 点击单词：完成态（练习）弹入本确认；非完成态播词音（测试模式禁用，防提示）
+function onWordClick(seg: Seg) {
+  if (seg.type !== "word") return;
+  if (practiceMode.value === "practice" && sentenceDoneWait.value) {
+    const t = sentence.value!.tokens[seg.ti!];
+    if (t.is_name === 1) return;
+    if (t.in_vocab) {
+      reportInfo.value = `「${t.word}」已在生词本`;
+      setTimeout(() => (reportInfo.value = ""), 1800);
+      return;
+    }
+    wordConfirm.value = { word: t.word, wordId: t.word_id };
+    wordConfirmOpen.value = true;
     return;
   }
-  wordConfirm.value = { word: t.word, wordId: t.word_id };
-  wordConfirmOpen.value = true;
+  if (practiceMode.value !== "test") {
+    playWordAudio(seg);
+  }
 }
 
 // 确认加入生词本
