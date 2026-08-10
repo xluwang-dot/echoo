@@ -626,13 +626,16 @@ function createConfetti(count = 40, colors: string[] = CONFETTI_COLORS) {
   for (let i = 0; i < count; i++) {
     const p = document.createElement("div");
     p.className = "confetti-particle";
-    p.style.left = (48 + Math.random() * 4) + "%"; // 中心 ±2%（T057：杜绝左侧聚集）
+    p.style.left = "50%"; // 正中心
     p.style.top = "45%";
     p.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
     p.style.width = (4 + Math.random() * 5) + "px";
     p.style.height = (4 + Math.random() * 5) + "px";
-    p.style.setProperty("--tx", ((Math.random() - 0.5) * 240) + "px"); // ±120px
-    p.style.setProperty("--ty", (-(Math.random() * 260 + 60)) + "px");
+    // 扇形散开（上半圆随机角度）：横向必然错开，杜绝竖条/左边缘聚集
+    const angle = Math.random() * Math.PI;
+    const dist = 60 + Math.random() * 200;
+    p.style.setProperty("--tx", (Math.cos(angle) * dist) + "px");
+    p.style.setProperty("--ty", (-Math.sin(angle) * dist) + "px");
     p.style.setProperty("--tr", (Math.random() * 1080) + "deg");
     p.style.setProperty("--dur", (0.8 + Math.random() * 0.8) + "s");
     p.style.setProperty("--del", (Math.random() * 0.15) + "s");
