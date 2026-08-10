@@ -812,7 +812,11 @@ onUnmounted(() => {
         <div class="progress">
           第 {{ todayList.length + 1 }}/{{ total }} 句 · 用时 {{ elapsedText }}
         </div>
-        <div v-if="showZh" class="zh">{{ sentence?.zh }}</div>
+        <div v-if="showZh" class="zh">
+          {{ sentence?.zh }}
+          <!-- T058：对话语境提示（上句小字，不抢主内容） -->
+          <div v-if="sentence?.prev_en" class="ctx">↳ 上句：{{ sentence.prev_en }}</div>
+        </div>
         <div class="input-card">
           <div class="en" :class="['mode-' + practiceMode, 'size-' + enSize, { flash: flashError, 'slide-exit': slideState === 'exit', 'slide-enter': slideState === 'enter' }]">
             <span v-for="(seg, i) in segments" :key="i" :class="renderSegClass(seg)" @click="onWordClick(seg)">
@@ -1079,6 +1083,12 @@ onUnmounted(() => {
   align-items: center;
   width: fit-content;
   min-width: 360px;
+}
+.zh .ctx {
+  margin-top: 8px;
+  font-size: 13px;
+  color: #9aa1af;
+  font-weight: 400;
 }
 .zh {
   font-size: 34px;

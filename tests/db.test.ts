@@ -201,3 +201,11 @@ describe("T005 schema", () => {
     const t = new DatabaseSync(TEST_DB).prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='levelup_history'").get();
     expect(t).toBeTruthy();
   });
+
+  it("迁移：sentences 补 prev_en 列（T058）", () => {
+    resetDb(TEST_DB);
+    const cols = (
+      new DatabaseSync(TEST_DB).prepare("PRAGMA table_info(sentences)").all() as { name: string }[]
+    ).map((r) => r.name);
+    expect(cols).toContain("prev_en");
+  });

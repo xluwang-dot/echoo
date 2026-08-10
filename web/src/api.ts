@@ -11,6 +11,7 @@ export interface Sentence {
   sentenceId: number;
   zh: string;
   en: string;
+  prev_en?: string | null; // T058：课内上一句（对话语境提示）
   tokens: Token[];
   wordIdx: number;
 }
