@@ -367,9 +367,7 @@ async function finishSentence() {
   // 连击：本句无提示/无失败 → +1，有 → 归零
   const hadHint = wordResults.some((w) => w.result === "hint" || w.result === "test_fail");
   streak.value = hadHint ? 0 : streak.value + 1;
-
-  // 奖励特效：纸屑 + 里程碑庆祝（T057：每句 15 个轻量，大节点才 80/120）
-  createConfetti(streak.value >= 5 && streak.value % 5 === 0 ? 80 : 15);
+  // T057：每句不再触发粒子（避免竖条/色块困扰）；掌握/里程碑大特效保留
 
   // 滑动翻页：当前句向左滑出
   slideState.value = "exit";
