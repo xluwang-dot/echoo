@@ -406,6 +406,7 @@ export function finishSession(db: DatabaseSync, sessionId: number, doneCount: nu
 
 // 记录单词结果：mastered → 词句对间隔推进（达阈值标掌握）；hint → 入本/重置。始终写 test_records。
 // T027：不再「整句拼对即移除」，掌握判定由词句对连续成功驱动（§3.2.3）
+// T064：返回处理后 status（mastered 分支），供 completeSentence 判定掌握推进，避免重复查询
 export function recordWord(
   db: DatabaseSync,
   sessionId: number,
@@ -413,8 +414,12 @@ export function recordWord(
   wordId: number,
   sentenceId: number,
   result: WordResult
-): void {
+): string | null {
   const now = new Date().toISOString();
+  // 结果流水：所有分支必写（T064 重构后提前 return 也不丢失）
+  db.prepare(
+    "INSERT INTO test_records (session_id, user_id, word_id, sentence_id, time, result) VALUES (?, ?, ?, ?, ?, ?)"
+  ).run(sessionId, userId, wordId, sentenceId, now, result);
   if (result === "mastered") {
     const pair = db
       .prepare("SELECT interval, review_count, status, next_review FROM user_vocab WHERE user_id=? AND word_id=? AND sentence_id=?")
@@ -424,6 +429,11 @@ export function recordWord(
         // T040：待测试候选 → 测试模式验收通过 → 掌握（间隔不推进）
         db.prepare("UPDATE user_vocab SET status='mastered' WHERE user_id=? AND word_id=? AND sentence_id=?")
           .run(userId, wordId, sentenceId);
+        db.prepare(
+          "INSERT INTO word_status (user_id, word_id, status, updated_at) VALUES (?, ?, 'mastered', ?)"
+            + " ON CONFLICT(user_id, word_id) DO UPDATE SET status='mastered', updated_at=excluded.updated_at"
+        ).run(userId, wordId, now);
+        return "mastered";
       } else {
         // T039：到期复习成功才推进（SM 时间语义）；未到期/同日重复只巩固、不推进
         const due = pair.next_review === null || pair.next_review <= todayStr();
@@ -434,14 +444,26 @@ export function recordWord(
           db.prepare(
             "UPDATE user_vocab SET interval=?, review_count=?, next_review=?, status=? WHERE user_id=? AND word_id=? AND sentence_id=?"
           ).run(interval, reviewCount, addDays(interval), status, userId, wordId, sentenceId);
+          db.prepare(
+            "INSERT INTO word_status (user_id, word_id, status, updated_at) VALUES (?, ?, ?, ?)"
+              + " ON CONFLICT(user_id, word_id) DO UPDATE SET status=excluded.status, updated_at=excluded.updated_at"
+          ).run(userId, wordId, status, now);
+          return status;
         }
+        // 未到期：不推进（但结果仍记统计——word_status 'mastered'）
+        db.prepare(
+          "INSERT INTO word_status (user_id, word_id, status, updated_at) VALUES (?, ?, 'mastered', ?)"
+            + " ON CONFLICT(user_id, word_id) DO UPDATE SET status='mastered', updated_at=excluded.updated_at"
+        ).run(userId, wordId, now);
+        return pair.status;
       }
     }
-    // 统计展示（word_status，与生词本判定独立）
+    // 无词句对记录（理论上 mastered 结果必有记录）：仍记 word_status
     db.prepare(
-      `INSERT INTO word_status (user_id, word_id, status, updated_at) VALUES (?, ?, 'mastered', ?)
-       ON CONFLICT(user_id, word_id) DO UPDATE SET status='mastered', updated_at=excluded.updated_at`
+      "INSERT INTO word_status (user_id, word_id, status, updated_at) VALUES (?, ?, 'mastered', ?)"
+        + " ON CONFLICT(user_id, word_id) DO UPDATE SET status='mastered', updated_at=excluded.updated_at"
     ).run(userId, wordId, now);
+    return null;
   } else if (result === "test_fail") {
     // 测试失败：降级（§3.2.5）——回 learning、间隔重置、错误频次 +1
     db.prepare(
@@ -456,9 +478,7 @@ export function recordWord(
       "UPDATE user_vocab SET interval=1, review_count=0, next_review=? WHERE user_id=? AND word_id=? AND sentence_id=?"
     ).run(addDays(1), userId, wordId, sentenceId);
   }
-  db.prepare(
-    "INSERT INTO test_records (session_id, user_id, word_id, sentence_id, time, result) VALUES (?, ?, ?, ?, ?, ?)"
-  ).run(sessionId, userId, wordId, sentenceId, now, result);
+  return null;
 }
 
 export interface WordOutcome {
@@ -478,20 +498,9 @@ export function completeSentence(
   // T045：返回本次新标记 mastered 的词（candidate → mastered，用于前端掌握特效）
   const masteredWordIds: number[] = [];
   for (const o of outcomes) {
-    if (o.result === "mastered") {
-      const before = db
-        .prepare("SELECT status FROM user_vocab WHERE user_id=? AND word_id=? AND sentence_id=?")
-        .get(userId, o.wordId, sentenceId) as { status: string } | undefined;
-      recordWord(db, sessionId, userId, o.wordId, sentenceId, o.result);
-      if (before?.status === "candidate") {
-        const after = db
-          .prepare("SELECT status FROM user_vocab WHERE user_id=? AND word_id=? AND sentence_id=?")
-          .get(userId, o.wordId, sentenceId) as { status: string } | undefined;
-        if (after?.status === "mastered") masteredWordIds.push(o.wordId);
-      }
-    } else {
-      recordWord(db, sessionId, userId, o.wordId, sentenceId, o.result);
-    }
+    const after = recordWord(db, sessionId, userId, o.wordId, sentenceId, o.result);
+    // T064：recordWord 已返回处理后 status——candidate → mastered 视为本次新掌握
+    if (o.result === "mastered" && after === "mastered") masteredWordIds.push(o.wordId);
   }
   return masteredWordIds;
 }

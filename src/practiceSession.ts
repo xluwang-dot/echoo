@@ -11,9 +11,13 @@ export interface SessionState {
   wordIdx: number; // 当前词下标
   typed: string; // 当前词已输入字符
   startedAt: number; // Date.now()
+  lastActive: number; // T059：最后活动时间（滑动过期）
   mode: "practice" | "review" | "test"; // 练习/复习/测试模式（T028）
   scope?: TestScope; // 测试范围（T028）
 }
+
+// T059：会话滑动过期时长（2 小时——升级测试 20 句可能超 30 分钟）
+export const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
 
 const store = new Map<number, SessionState>();
 
@@ -21,8 +25,16 @@ export function resetSessionStore(): void {
   store.clear();
 }
 
+// T059：读取时检查滑动过期——超 2h 未活动自动清理（防内存泄漏）
 export function getSession(userId: number): SessionState | undefined {
-  return store.get(userId);
+  const st = store.get(userId);
+  if (!st) return undefined;
+  if (Date.now() - st.lastActive > SESSION_TTL_MS) {
+    store.delete(userId);
+    return undefined;
+  }
+  st.lastActive = Date.now();
+  return st;
 }
 
 export function clearSession(userId: number): void {
@@ -52,6 +64,7 @@ export function createSession(
     wordIdx: 0,
     typed: "",
     startedAt: Date.now(),
+    lastActive: Date.now(),
     mode,
     scope,
   };

@@ -9,7 +9,8 @@ import type { DatabaseSync } from "node:sqlite";
 import { SCHEMA_SQL } from "../src/db/schema.js";
 import { audioRouter } from "../src/routes/audio.js";
 
-const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "word_typer_audio_test_"));
+// T062：测试音频放 data/ 内（安全目录校验语义），afterAll 清理
+const tmpDir = fs.mkdtempSync(path.join(process.cwd(), "data", "test_audio_tmp"));
 const TEST_DB = path.join(tmpDir, "test.db");
 let db: DatabaseSync;
 let app: express.Express;

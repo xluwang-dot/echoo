@@ -46,6 +46,11 @@ function migrate(db: DatabaseSync): void {
       db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}`);
     }
   }
+  // T065：高频查询索引（须在 ALTER 补列之后，旧库缺列时建索引会失败）
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_user_vocab_user_status ON user_vocab(user_id, status);
+           CREATE INDEX IF NOT EXISTS idx_user_vocab_user_word ON user_vocab(user_id, word_id, sentence_id);
+           CREATE INDEX IF NOT EXISTS idx_test_records_session ON test_records(session_id);
+           CREATE INDEX IF NOT EXISTS idx_test_records_user ON test_records(user_id, sentence_id);`);
 }
 
 export function initDb(databasePath: string = DB_PATH): DatabaseSync {

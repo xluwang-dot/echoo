@@ -6,6 +6,22 @@ import path from "path";
 import type { DatabaseSync } from "node:sqlite";
 import { getDb } from "../db.js";
 
+// T062：校验路径在 data/ 目录内（防路径遍历/DB 污染泄露）
+const DATA_ROOT = path.resolve(process.cwd(), "data");
+function safeAudioPath(abs: string): boolean {
+  const resolved = path.resolve(abs);
+  return resolved === DATA_ROOT || resolved.startsWith(DATA_ROOT + path.sep);
+}
+
+// T066：sendFile 统一回调（异步失败不挂起）
+function sendAudio(res: Response, abs: string): void {
+  res.sendFile(abs, (err) => {
+    if (err && !res.headersSent) {
+      res.status(500).json({ error: "音频发送失败" });
+    }
+  });
+}
+
 export function audioRouter(db?: DatabaseSync): Router {
   const router = Router();
   const database = db ?? getDb();
@@ -23,11 +39,16 @@ export function audioRouter(db?: DatabaseSync): Router {
     const abs = path.isAbsolute(row.audio_path)
       ? row.audio_path
       : path.resolve(process.cwd(), row.audio_path);
+    if (!safeAudioPath(abs)) {
+      res.status(403).json({ error: "路径不在安全目录内" });
+      return;
+    }
     if (!fs.existsSync(abs)) {
       res.status(404).json({ error: "音频文件缺失" });
       return;
     }
-    res.type("audio/wav").sendFile(abs);
+    res.type("audio/wav");
+    sendAudio(res, abs);
   });
 
   router.get("/:sentenceId", (req: Request, res: Response) => {
@@ -41,11 +62,16 @@ export function audioRouter(db?: DatabaseSync): Router {
     }
     // 相对路径基于项目根解析
     const abs = path.isAbsolute(row.file_path) ? row.file_path : path.resolve(process.cwd(), row.file_path);
+    if (!safeAudioPath(abs)) {
+      res.status(403).json({ error: "路径不在安全目录内" });
+      return;
+    }
     if (!fs.existsSync(abs)) {
       res.status(404).json({ error: "音频文件缺失" });
       return;
     }
-    res.type("audio/wav").sendFile(abs);
+    res.type("audio/wav");
+    sendAudio(res, abs);
   });
 
   return router;

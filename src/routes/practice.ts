@@ -5,7 +5,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { getDb } from "../db.js";
 import { requireAuth } from "./auth.js";
 import { getSentenceWithTokens, completeSentence, getDueCount, aggregateVocabState, getDueWords, getMasteryCount, getUserLevel, updateUserLevel, isLevelUpPassed, isLevelTestReady } from "../practice.js";
-import { wordState, sentenceDone } from "../checker.js";
+import { wordState } from "../checker.js";
 import { createSession, getSession, clearSession, elapsedMs } from "../practiceSession.js";
 import { finishSession as persistSession } from "../practice.js";
 import { addVocab } from "../vocab.js";
