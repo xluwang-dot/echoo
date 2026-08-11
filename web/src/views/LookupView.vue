@@ -1,10 +1,11 @@
 <script setup lang="ts">
 // T070：单词查询结果页——搜索框 + 词详情 + 状态 + 关联句子 + 加入 SM
 import { ref, onMounted } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { api } from "../api";
 
 const route = useRoute();
+const router = useRouter();
 
 const q = ref("");
 const error = ref("");
@@ -72,6 +73,17 @@ function playWord() {
   }
 }
 
+function playSentence(sentenceId: number) {
+  try {
+    if (!audioEl) audioEl = new Audio();
+    audioEl.src = api.audioUrl(sentenceId);
+    audioEl.currentTime = 0;
+    audioEl.play().catch(() => {});
+  } catch {
+    /* 静默 */
+  }
+}
+
 async function addToSm(sentenceId: number, wordId: number) {
   try {
     await api.vocabAdd(wordId, sentenceId);
@@ -100,6 +112,10 @@ onMounted(() => {
 <template>
   <div class="lookup">
     <div class="lookup-card">
+      <!-- 返回主页 -->
+      <div class="lookup-back">
+        <button class="ghost" @click="router.push('/practice')">← 返回主页</button>
+      </div>
       <!-- 搜索框 -->
       <div class="lookup-search">
         <input
@@ -131,7 +147,7 @@ onMounted(() => {
         <div class="word-head">
           <span class="word-title">{{ result.word.word }}</span>
           <span v-if="result.word.phonetic" class="word-phonetic">{{ result.word.phonetic }}</span>
-          <button class="ghost" @click="playWord">🔊</button>
+          <button class="speaker" @click="playWord" title="播放发音">🔊</button>
         </div>
         <p class="word-meaning">{{ result.word.meaning ?? "—" }}</p>
         <p class="word-meta">
@@ -164,12 +180,13 @@ onMounted(() => {
           <h4>关联句子（{{ result.sentences.length }}）</h4>
           <div v-if="!result.sentences.length" class="lookup-tip">该词暂无关联句子</div>
           <div v-for="s in result.sentences" :key="s.id" class="sent-row">
-            <div class="sent-en">{{ s.en }}</div>
-            <div class="sent-zh">{{ s.zh }}</div>
-            <div class="sent-op">
-              <span v-if="s.in_vocab" class="status-tag tag-ok">已入本{{ s.status ? `（${statusText[s.status] ?? s.status}）` : "" }}</span>
-              <button v-else class="primary small" @click="addToSm(s.id, result.word.id)">➕ 加入生词本</button>
+            <div class="sent-line">
+              <button class="speaker small" @click="playSentence(s.id)" title="播放句子">🔊</button>
+              <span class="sent-en">{{ s.en }}</span>
+              <button v-if="!s.in_vocab" class="add-btn" @click="addToSm(s.id, result.word.id)" title="加入生词本">＋</button>
+              <span v-else class="added">已入本</span>
             </div>
+            <div class="sent-zh">{{ s.zh }}</div>
           </div>
         </div>
       </div>
@@ -186,6 +203,41 @@ onMounted(() => {
 }
 .lookup-card {
   width: min(720px, 96vw);
+}
+.lookup-back {
+  margin-bottom: 10px;
+}
+.speaker {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 2px 4px;
+  color: #64748b;
+}
+.speaker.small {
+  font-size: 13px;
+}
+.sent-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.add-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+  color: #2563eb;
+  padding: 0 4px;
+  line-height: 1;
+}
+.add-btn:hover {
+  color: #1d4ed8;
+}
+.added {
+  font-size: 12px;
+  color: #94a3b8;
 }
 .lookup-search {
   position: relative;

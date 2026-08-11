@@ -769,19 +769,20 @@ onUnmounted(() => {
     <div class="main">
       <div class="topbar">
         <span class="title">背单词 · 听写</span>
-        <div class="topbar-search">
-          <input
-            v-model="searchQ"
-            class="search-input"
-            placeholder="🔍 查询单词"
-            @keydown.enter="goLookup"
-          />
-        </div>
         <div class="topbar-right">
           <span v-if="streak >= 3" class="streak-badge">🔥 连击 ×{{ streak }}</span>
           <button class="ghost" @click="router.push('/settings')">⚙️ 设置</button>
           <button class="ghost" @click="onLogout">退出</button>
         </div>
+      </div>
+      <!-- T070：搜索框独立一行（标题栏位置，下方留复习提示框） -->
+      <div class="search-bar">
+        <input
+          v-model="searchQ"
+          class="search-input"
+          placeholder="🔍 查询单词"
+          @keydown.enter="goLookup"
+        />
       </div>
 
       <!-- 设置页 -->
@@ -1559,19 +1560,19 @@ onUnmounted(() => {
 }
 
 /* ---- 顶栏右侧 ---- */
-.topbar-search {
-  flex: 1;
-  max-width: 320px;
-  margin: 0 14px;
+.search-bar {
+  width: min(480px, 92%);
+  margin: 12px auto 0;
 }
 .search-input {
   width: 100%;
-  padding: 7px 14px;
+  padding: 9px 18px;
   font-size: 14px;
   border: 1.5px solid #e2e8f0;
   border-radius: 999px;
   outline: none;
   background: #fff;
+  text-align: center;
 }
 .search-input:focus {
   border-color: #2563eb;
