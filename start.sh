@@ -32,7 +32,13 @@ if [ "$MODE" = "dev" ]; then
   nohup npm run dev:web > logs/frontend.log 2>&1 &
   sleep 5
   echo "==> 健康检查"
-  if curl -s http://localhost:3008/health | grep -q '"ok":true'; then
+  # T069：迁移/回填可能耗时，最多等 15s
+  ok=0
+  for _ in $(seq 1 15); do
+    if curl -s http://localhost:3008/health | grep -q '"ok":true'; then ok=1; break; fi
+    sleep 1
+  done
+  if [ "$ok" = "1" ]; then
     echo "    后端 OK → http://localhost:3008"
   else
     echo "    ⚠️ 后端健康检查失败，请查看 logs/backend.log"
@@ -48,9 +54,14 @@ else
   npm run build && npm run build --prefix web || { echo "构建失败，请检查报错"; exit 1; }
   echo "==> 启动生产（node dist/index.js，单端口 3008）"
   nohup npm run start > logs/backend.log 2>&1 &
-  sleep 3
   echo "==> 健康检查"
-  if curl -s http://localhost:3008/health | grep -q '"ok":true'; then
+  # T069：首次迁移/课序回填/人名重标可能耗时，最多等 15s
+  ok=0
+  for _ in $(seq 1 15); do
+    if curl -s http://localhost:3008/health | grep -q '"ok":true'; then ok=1; break; fi
+    sleep 1
+  done
+  if [ "$ok" = "1" ]; then
     echo "    后端 OK → http://localhost:3008"
   else
     echo "    ⚠️ 后端健康检查失败，请查看 logs/backend.log"
