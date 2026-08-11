@@ -859,3 +859,91 @@ describe("T045 complete 响应含 masteredWordIds/masteryCount", () => {
     expect(comp.body.masteryCount).toBe(1);
   });
 });
+
+// ============ T069 听写接口 ============
+describe("T069 听写接口", () => {
+  let ddb: DatabaseSync;
+  let dapp: express.Express;
+  let dagent: request.Agent;
+  beforeAll(async () => {
+    resetSessionStore();
+    ddb = freshDb();
+    ddb.prepare("INSERT INTO users (username, password_hash) VALUES (?, ?)").run("t069u", hashPassword("a123456"));
+    dapp = express();
+    dapp.use(express.json());
+    dapp.use(configureSession());
+    dapp.use("/api/auth", authRouter(ddb));
+    dapp.use("/api/practice", practiceRouter(ddb));
+    dagent = request.agent(dapp);
+  });
+  afterAll(() => {
+    ddb.close();
+  });
+  beforeEach(async () => {
+    // 重置词表（带课序/音频）
+    ddb.exec("DELETE FROM test_records; DELETE FROM practice_sessions; DELETE FROM sentence_reports; DELETE FROM sentence_words; DELETE FROM sentences; DELETE FROM words; DELETE FROM dictation_cursor; DELETE FROM dictation_done; DELETE FROM user_vocab; DELETE FROM word_status;");
+    ddb.prepare("INSERT INTO words (word, level, lesson_no, lesson_pos, audio_path, meaning, phonetic) VALUES ('alpha', 1, 1, 10, 'a.mp3', '词一', '/a/')").run();
+    ddb.prepare("INSERT INTO words (word, level, lesson_no, lesson_pos, audio_path, meaning, phonetic) VALUES ('bravo', 1, 2, 20, 'b.mp3', '词二', '/b/')").run();
+    ddb.prepare("INSERT INTO words (word, level, lesson_no, lesson_pos, audio_path, meaning, phonetic) VALUES ('charlie', 1, 3, 30, 'c.mp3', '词三', '/c/')").run();
+    const r = await dagent.post("/api/auth/login").send({ username: "t069u", password: "a123456" });
+    expect(r.status).toBe(200);
+  });
+
+  it("dictation-timing 返回可配置时间", async () => {
+    const r = await request(dapp).get("/api/practice/dictation-timing");
+    expect(r.status).toBe(200);
+    expect(r.body.replay2).toBe(3000);
+    expect(r.body.replay3).toBe(8000);
+    expect(r.body.autoNext).toBe(12000);
+  });
+
+  it("start mode=dictation：返回占位句（1 词）+ 游标推进", async () => {
+    const r = await dagent.post("/api/practice/start").send({ targetCount: 2, mode: "dictation" });
+    expect(r.status).toBe(200);
+    expect(r.body.total).toBe(2);
+    // T069：dictation 一次返回全部词（前端不推进服务端 state）
+    expect(r.body.words).toHaveLength(2);
+    expect(r.body.current.en).toBe(r.body.words[0].en);
+    const en = r.body.current.en;
+    expect(["alpha", "bravo"]).toContain(en);
+    // 输入判定可用：服务端 state 停在第一词
+    const c = await dagent.post("/api/practice/check").send({ char: en[0] });
+    expect(c.status).toBe(200);
+    expect(c.body.correct).toBe(true);
+    const cur = ddb.prepare("SELECT * FROM dictation_cursor WHERE user_id=(SELECT id FROM users WHERE username='t069u')").get() as any;
+    expect(cur.lesson_no).toBeGreaterThan(0);
+    const done = ddb.prepare("SELECT COUNT(*) c FROM dictation_done WHERE user_id=(SELECT id FROM users WHERE username='t069u')").get() as any;
+    expect(done.c).toBe(2);
+  });
+
+  it("next：无落库推进下一占位句", async () => {
+    await dagent.post("/api/practice/start").send({ targetCount: 2, mode: "dictation" });
+    const r = await dagent.post("/api/practice/next").send({});
+    expect(r.status).toBe(200);
+    expect(["alpha", "bravo"]).toContain(r.body.next.en);
+    // 无落库：word_status/user_vocab 无记录
+    const ws = ddb.prepare("SELECT COUNT(*) c FROM word_status").get() as any;
+    expect(ws.c).toBe(0);
+    const uv = ddb.prepare("SELECT COUNT(*) c FROM user_vocab").get() as any;
+    expect(uv.c).toBe(0);
+  });
+
+  it("complete-dictation：错误词占位句入本 + 正确词无痕", async () => {
+    const r = await dagent.post("/api/practice/start").send({ targetCount: 2, mode: "dictation" });
+    // 收集两个词的 wordId
+    const words = [r.body.current];
+    const r2 = await dagent.post("/api/practice/next").send({});
+    words.push(r2.body.next);
+    const wrongId = words[0].tokens[0].word_id;
+    const cr = await dagent.post("/api/practice/complete-dictation").send({ wrongWordIds: [wrongId] });
+    expect(cr.status).toBe(200);
+    expect(cr.body.added).toBe(1);
+    // 错误词已入本（占位句）
+    const uv = ddb.prepare("SELECT uv.*, s.is_word_only FROM user_vocab uv JOIN sentences s ON s.id=uv.sentence_id").all() as any[];
+    expect(uv.length).toBe(1);
+    expect(uv[0].is_word_only).toBe(1);
+    // 正确词无 user_vocab / word_status
+    const ws = ddb.prepare("SELECT COUNT(*) c FROM word_status").get() as any;
+    expect(ws.c).toBe(0);
+  });
+});

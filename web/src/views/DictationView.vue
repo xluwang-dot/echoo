@@ -133,13 +133,8 @@ async function init() {
     timing.value = t;
     const r = await api.start(10, "dictation");
     total.value = r.total;
-    // 收集全部占位句（next 推进）
-    const list: Sentence[] = [r.current];
-    for (let i = 1; i < r.total; i++) {
-      const nx = await api.dictationNext();
-      if (nx.done || !nx.next) break;
-      list.push(nx.next);
-    }
+    // T069：后端一次性返回全部词（前端不推进服务端 state）
+    const list: Sentence[] = r.words ?? [r.current];
     words.value = list.map((s) => ({
       wordId: s.tokens[0]?.word_id ?? 0,
       word: s.tokens[0]?.word ?? s.en,

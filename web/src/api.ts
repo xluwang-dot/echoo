@@ -21,6 +21,7 @@ export interface Sentence {
 export interface StartResult {
   total: number;
   current: Sentence;
+  words?: Sentence[]; // T069：听写一次性返回全部词（不推进服务端 state）
 }
 
 export interface CompleteResult {

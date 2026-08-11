@@ -97,6 +97,11 @@ export function practiceRouter(db?: DatabaseSync): Router {
     const cur = currentTokens(database, state, req.session.userId!);
     skipNameWords(state, cur.sentence.tokens);
     skipNonVocabWords(state, cur.sentence.tokens, state.mode); // 复习模式跳过非生词
+    // T069：听写一次性返回全部词（前端不调 next 推进服务端 state——否则输入判定错位）
+    let words: unknown[] | undefined;
+    if (mode === "dictation") {
+      words = state.sentenceIds.map((id) => getSentenceWithTokens(database, id, req.session.userId!));
+    }
     res.json({
       total: state.sentenceIds.length, // T033：返回实际抽取句数（复习池不足 targetCount 时）
       current: {
@@ -109,6 +114,7 @@ export function practiceRouter(db?: DatabaseSync): Router {
         tokens: cur.sentence.tokens,
         wordIdx: state.wordIdx,
       },
+      ...(words ? { words } : {}),
     });
   });
 
