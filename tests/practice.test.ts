@@ -76,6 +76,17 @@ describe("T009 practice 抽取", () => {
     widBaz = db.prepare("INSERT INTO words (word) VALUES (?)").run("baz").lastInsertRowid as number;
   });
 
+  it("T069：抽句过滤含人名词的句子", () => {
+    // 造一句含人名词（george is here.）
+    const nid = db.prepare("INSERT INTO words (word, is_name) VALUES (?, 1)").run("george").lastInsertRowid as number;
+    const nsid = db.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("george is here.", "乔治在这。").lastInsertRowid as number;
+    db.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?, ?, 0, 0)").run(nsid, nid);
+    const ids = drawSession(db, userA, 3);
+    expect(ids).not.toContain(nsid); // 人名句不抽
+    // 未测试句池仅剩 foo/bar 句（sid1/sid2/sid3 无名字）
+    expect(ids.length).toBeGreaterThan(0);
+  });
+
   it("全部未测试：target=2 从 U 抽 2 句，会话内不重复", () => {
     const ids = drawSession(db, userA, 2);
     expect(ids.length).toBe(2);

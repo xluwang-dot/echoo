@@ -32,6 +32,16 @@ export function getUntestedSentenceIds(db: DatabaseSync, userId: number): number
   return all.filter((id) => !testedSet.has(id));
 }
 
+// T069：含人名词（is_name=1）的句子——练习/复习/测试抽句统一过滤（人名不练拼写）
+export function getNameSentenceIds(db: DatabaseSync): Set<number> {
+  const rows = db
+    .prepare(
+      "SELECT DISTINCT sw.sentence_id FROM sentence_words sw JOIN words w ON w.id = sw.word_id WHERE w.is_name = 1"
+    )
+    .all() as { sentence_id: number }[];
+  return new Set(rows.map((r) => r.sentence_id));
+}
+
 // 生词本涉及的句子 id
 // 被报告句子 id（≥1 次报告即进入规避池；句子问题对所有用户一致）
 export function getReportedSentenceIds(db: DatabaseSync): number[] {
@@ -248,9 +258,10 @@ export function drawSession(
   const { newRatio = 3, reviewRatio = 7, reviewOnly = false } = config;
   // 被报告句子：常规池剔除、放兜底末尾（§3.6 优先规避）
   const reported = new Set(getReportedSentenceIds(db));
-  let untested = getUntestedSentenceIds(db, userId).filter((id) => !reported.has(id));
-  const review = getReviewSentenceIds(db, userId).filter((id) => !reported.has(id));
-  const tested = getTestedSentenceIds(db, userId).filter((id) => !reported.has(id));
+  const named = getNameSentenceIds(db); // T069：人名句统一过滤
+  let untested = getUntestedSentenceIds(db, userId).filter((id) => !reported.has(id) && !named.has(id));
+  const review = getReviewSentenceIds(db, userId).filter((id) => !reported.has(id) && !named.has(id));
+  const tested = getTestedSentenceIds(db, userId).filter((id) => !reported.has(id) && !named.has(id));
 
   // T053a：按用户等级过滤未测试池（混合模式）
   const level = config.level ?? 0;

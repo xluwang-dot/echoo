@@ -250,6 +250,13 @@ async function onChar(ch: string) {
         } else {
           wordIdx.value += 1;
           typed.value = "";
+          // T069：词间跳过人名词（练习模式——姓名不练拼写，防光标卡死在名字上）
+          while (
+            wordIdx.value < sentence.value!.tokens.length &&
+            sentence.value!.tokens[wordIdx.value].is_name === 1
+          ) {
+            wordIdx.value += 1;
+          }
         }
       }
     } else {
