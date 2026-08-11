@@ -1,7 +1,7 @@
 // 练习会话状态机（T010，内存存储）
 // 每个登录用户同时只有一个进行中的练习会话。
 import type { DatabaseSync } from "node:sqlite";
-import { drawSession, drawTestSentenceIds, startSession, drawLevelupSentenceIds, isLevelUpPassed, type DrawConfig, type TestScope } from "./practice.js";
+import { drawSession, drawTestSentenceIds, startSession, drawLevelupSentenceIds, isLevelUpPassed, drawDictationSentenceIds, getUserLevel, type DrawConfig, type TestScope } from "./practice.js";
 
 export interface SessionState {
   sessionId: number;
@@ -12,7 +12,7 @@ export interface SessionState {
   typed: string; // 当前词已输入字符
   startedAt: number; // Date.now()
   lastActive: number; // T059：最后活动时间（滑动过期）
-  mode: "practice" | "review" | "test"; // 练习/复习/测试模式（T028）
+  mode: "practice" | "review" | "test" | "dictation"; // 练习/复习/测试/听写模式
   scope?: TestScope; // 测试范围（T028）
 }
 
@@ -46,7 +46,7 @@ export function createSession(
   db: DatabaseSync,
   userId: number,
   targetCount: number,
-  config?: DrawConfig & { mode?: "practice" | "review" | "test"; scope?: TestScope }
+  config?: DrawConfig & { mode?: "practice" | "review" | "test" | "dictation"; scope?: TestScope }
 ): SessionState {
   const { mode = "practice", scope = "all", ...drawConfig } = config ?? {};
   const sentenceIds =
@@ -54,7 +54,9 @@ export function createSession(
       ? scope === "levelup"
         ? drawLevelupSentenceIds(db, userId, targetCount).sentenceIds // T053b：升级测试
         : drawTestSentenceIds(db, userId, targetCount, scope)
-      : drawSession(db, userId, targetCount, drawConfig);
+      : mode === "dictation"
+        ? drawDictationSentenceIds(db, userId, targetCount, getUserLevel(db, userId)) // T069：听写（按级课序）
+        : drawSession(db, userId, targetCount, drawConfig);
   const sessionId = startSession(db, userId, targetCount, mode);
   const state: SessionState = {
     sessionId,

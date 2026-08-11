@@ -603,7 +603,10 @@ async function onLogout() {
 let audioEl: HTMLAudioElement | null = null;
 async function playSentence() {
   if (!sentence.value) return;
-  const url = api.audioUrl(sentence.value.sentenceId);
+  // T069：占位句（单词听写）播词音频；真实句播句音频
+  const url = sentence.value.is_word_only
+    ? api.wordAudioUrl(sentence.value.tokens[0]?.word ?? sentence.value.en)
+    : api.audioUrl(sentence.value.sentenceId);
   if (!audioEl) audioEl = new Audio();
   audioEl.src = url;
   audioEl.currentTime = 0;
@@ -769,6 +772,12 @@ onUnmounted(() => {
           <button class="plain" @click="openDueWords">查看单词</button>
         </div>
         <div class="menu-cards">
+          <!-- T069：单词听写入口（练习左边） -->
+          <div class="menu-card" @click="router.push('/dictation')">
+            <div class="card-icon">🎧</div>
+            <h2>单词听写</h2>
+            <p>按课文顺序扫描生词</p>
+          </div>
           <div class="menu-card" @click="onStart('practice')">
             <div class="card-icon">📝</div>
             <h2>练习</h2>
@@ -825,7 +834,11 @@ onUnmounted(() => {
           <div v-else-if="!isQuestion && sentence?.prev_en" class="ctx">↳ 上句：{{ sentence.prev_en }}</div>
         </div>
         <div class="input-card">
-          <div class="en" :class="['mode-' + practiceMode, 'size-' + enSize, { flash: flashError, 'slide-exit': slideState === 'exit', 'slide-enter': slideState === 'enter' }]">
+          <!-- T069：占位句 → 听音拼写（不显示单词文本） -->
+          <div v-if="sentence?.is_word_only" class="en dict-mode">
+            <span class="typed">{{ typed }}</span><span class="dict-caret">▍</span>
+          </div>
+          <div v-else class="en" :class="['mode-' + practiceMode, 'size-' + enSize, { flash: flashError, 'slide-exit': slideState === 'exit', 'slide-enter': slideState === 'enter' }]">
             <span v-for="(seg, i) in segments" :key="i" :class="renderSegClass(seg)" @click="onWordClick(seg)">
               <template v-if="seg.type === 'word' && isActive(seg)">
                 <span class="typed">{{ typed }}</span><span class="blank">{{ blankRemain(seg) }}</span>
@@ -1095,6 +1108,18 @@ onUnmounted(() => {
   font-size: 13px;
   color: #9aa1af;
   font-weight: 400;
+}
+.en.dict-mode {
+  font-size: 36px;
+  font-weight: 700;
+  color: #1e293b;
+  letter-spacing: 2px;
+  display: flex;
+  align-items: center;
+}
+.dict-caret {
+  color: #2563eb;
+  animation: blink 1s step-end infinite;
 }
 .zh {
   font-size: 34px;

@@ -8,6 +8,7 @@ export interface SentenceWithTokens {
   id: number;
   en: string;
   zh: string;
+  is_word_only: boolean; // T069：单词占位句（复习显示听音拼写）
   prev_en: string | null; // T058：课内上一句（对话语境提示）
   next_en: string | null; // T058：课内下一句（问句时提示答句）
   tokens: { word_id: number; word: string; is_name: number; is_bold: number; in_vocab: boolean }[];
@@ -72,7 +73,7 @@ function dateStr(d: Date): string {
 function todayStr(): string {
   return dateStr(new Date());
 }
-function addDays(days: number): string {
+export function addDays(days: number): string {
   return dateStr(new Date(Date.now() + days * 86400000));
 }
 
@@ -410,6 +411,11 @@ export function recordWord(
   result: WordResult
 ): string | null {
   const now = new Date().toISOString();
+  // T069：真实句覆盖占位句（进度合并，删占位句记录）——占位句自身不触发
+  const sentRow = db.prepare("SELECT is_word_only FROM sentences WHERE id=?").get(sentenceId) as { is_word_only: number } | undefined;
+  if (sentRow && !sentRow.is_word_only) {
+    mergePlaceholderToReal(db, userId, wordId, sentenceId);
+  }
   // 结果流水：所有分支必写（T064 重构后提前 return 也不丢失）
   db.prepare(
     "INSERT INTO test_records (session_id, user_id, word_id, sentence_id, time, result) VALUES (?, ?, ?, ?, ?, ?)"
@@ -510,8 +516,8 @@ export function getMasteryCount(db: DatabaseSync, userId: number): number {
 // 取句子 + tokens（供前端渲染与判定）
 // userId 可选：传入时计算每个词的 in_vocab 状态（复习模式用）
 export function getSentenceWithTokens(db: DatabaseSync, sentenceId: number, userId?: number): SentenceWithTokens | undefined {
-  const s = db.prepare("SELECT id, en, zh, prev_en, next_en FROM sentences WHERE id = ?").get(sentenceId) as
-    | { id: number; en: string; zh: string; prev_en: string | null; next_en: string | null }
+  const s = db.prepare("SELECT id, en, zh, prev_en, next_en, is_word_only FROM sentences WHERE id = ?").get(sentenceId) as
+    | { id: number; en: string; zh: string; prev_en: string | null; next_en: string | null; is_word_only: number | null }
     | undefined;
   if (!s) return undefined;
   const rows = db
@@ -538,6 +544,7 @@ export function getSentenceWithTokens(db: DatabaseSync, sentenceId: number, user
     id: s.id,
     en: s.en,
     zh: s.zh,
+    is_word_only: s.is_word_only === 1, // T069
     prev_en: s.prev_en, // T058：上一句（对话语境提示）
     next_en: s.next_en, // T058：下一句
     tokens: rows.map((r) => ({
@@ -668,4 +675,142 @@ export function isLevelUpPassed(db: DatabaseSync, sessionId: number, threshold =
   if (bySent.size === 0) return false;
   const correct = [...bySent.values()].filter((rs) => rs.every((x) => x === "mastered")).length;
   return correct / bySent.size >= threshold;
+}
+
+// ---------- T069 单词听写 ----------
+// 用户等级 → 册课号范围（全局课号 1-276：册1=1-72 册2=73-168 册3=169-228 册4=229-276）
+export const LEVEL_LESSON_RANGE: Record<number, [number, number]> = {
+  1: [1, 72],
+  2: [73, 168],
+  3: [169, 228],
+  4: [229, 276],
+};
+
+// 听写时间参数（可配置：env DICTATION_REPLAY2/REPLAY3/AUTONEXT，单位 ms）
+export const DICTATION_TIMING = {
+  replay2: Number(process.env.DICTATION_REPLAY2 ?? 3000),  // 第二次播报（3s）
+  replay3: Number(process.env.DICTATION_REPLAY3 ?? 8000),  // 第三次播报 + 显示词义（8s）
+  autoNext: Number(process.env.DICTATION_AUTONEXT ?? 12000), // 自动下一词（12s）
+};
+
+// 占位句幂等创建（en=单词, zh=词义, is_word_only=1）
+export function getOrCreateWordSentence(db: DatabaseSync, wordId: number): number {
+  const w = db
+    .prepare("SELECT word, meaning, level FROM words WHERE id=?")
+    .get(wordId) as { word: string; meaning: string | null; level: number | null } | undefined;
+  if (!w) throw new Error(`词不存在 id=${wordId}`);
+  const exist = db
+    .prepare("SELECT id FROM sentences WHERE en=? AND is_word_only=1")
+    .get(w.word) as { id: number } | undefined;
+  if (exist) return exist.id;
+  const sid = db
+    .prepare("INSERT INTO sentences (en, zh, level, is_word_only) VALUES (?, ?, ?, 1)")
+    .run(w.word, w.meaning ?? "", w.level ?? 5).lastInsertRowid as number;
+  db.prepare("INSERT INTO sentence_words (sentence_id, word_id, position, is_bold) VALUES (?, ?, 0, 0)").run(sid, wordId);
+  return sid;
+}
+
+// 听写游标：扫描位置（课号 + 课内位置）
+export function getDictationCursor(db: DatabaseSync, userId: number): { lessonNo: number; lessonPos: number } {
+  const row = db
+    .prepare("SELECT lesson_no, lesson_pos FROM dictation_cursor WHERE user_id=?")
+    .get(userId) as { lesson_no: number; lesson_pos: number } | undefined;
+  return row ? { lessonNo: row.lesson_no, lessonPos: row.lesson_pos } : { lessonNo: 0, lessonPos: 0 };
+}
+
+function saveDictationCursor(db: DatabaseSync, userId: number, lessonNo: number, lessonPos: number): void {
+  db.prepare(
+    "INSERT INTO dictation_cursor (user_id, lesson_no, lesson_pos, updated_at) VALUES (?, ?, ?, ?)" +
+      " ON CONFLICT(user_id) DO UPDATE SET lesson_no=excluded.lesson_no, lesson_pos=excluded.lesson_pos, updated_at=excluded.updated_at"
+  ).run(userId, lessonNo, lessonPos, new Date().toISOString());
+}
+
+// 新一轮：清已听写标记 + 游标归零
+function resetDictationProgress(db: DatabaseSync, userId: number): void {
+  db.prepare("DELETE FROM dictation_done WHERE user_id=?").run(userId);
+  saveDictationCursor(db, userId, 0, 0);
+}
+
+// 抽听写词：游标后 + 册范围 + 未入本 + 未掌握 + 未听写 + 有音频 → 按课序
+function fetchDictationWords(
+  db: DatabaseSync,
+  userId: number,
+  level: number,
+  cur: { lessonNo: number; lessonPos: number },
+  count: number
+): { id: number; lesson_no: number; lesson_pos: number }[] {
+  return db
+    .prepare(
+      `SELECT id, lesson_no, lesson_pos FROM words
+       WHERE level = ? AND audio_path IS NOT NULL AND audio_path != ''
+         AND (lesson_no > ? OR (lesson_no = ? AND lesson_pos > ?))
+         AND NOT EXISTS (SELECT 1 FROM user_vocab uv WHERE uv.user_id = ? AND uv.word_id = words.id)
+         AND NOT EXISTS (SELECT 1 FROM dictation_done dd WHERE dd.user_id = ? AND dd.word_id = words.id)
+         AND NOT EXISTS (SELECT 1 FROM word_status ws WHERE ws.user_id = ? AND ws.word_id = words.id AND ws.status = 'mastered')
+       ORDER BY lesson_no, lesson_pos
+       LIMIT ?`
+    )
+    .all(level, cur.lessonNo, cur.lessonNo, cur.lessonPos, userId, userId, userId, count) as {
+    id: number;
+    lesson_no: number;
+    lesson_pos: number;
+  }[];
+}
+
+// 听写抽句：返回占位句 id 列表；全册扫完自动重置新一轮
+export function drawDictationSentenceIds(db: DatabaseSync, userId: number, count: number, level: number = 1): number[] {
+  let words = fetchDictationWords(db, userId, level, getDictationCursor(db, userId), count);
+  if (words.length < count) {
+    // 本轮扫完：重置（done 清空 + 游标归零）→ 从头再扫
+    resetDictationProgress(db, userId);
+    words = fetchDictationWords(db, userId, level, { lessonNo: 0, lessonPos: 0 }, count);
+  }
+  if (words.length > 0) {
+    const last = words[words.length - 1];
+    saveDictationCursor(db, userId, last.lesson_no, last.lesson_pos);
+    for (const w of words) {
+      db.prepare("INSERT OR IGNORE INTO dictation_done (user_id, word_id, time) VALUES (?, ?, ?)").run(
+        userId, w.id, new Date().toISOString()
+      );
+    }
+  }
+  return words.map((w) => getOrCreateWordSentence(db, w.id));
+}
+
+// 真实句覆盖占位句：进度合并（取较优者），删占位句记录——两者永不共存
+function mergePlaceholderToReal(db: DatabaseSync, userId: number, wordId: number, realSentenceId: number): void {
+  const ph = db
+    .prepare(
+      `SELECT s.id AS sid, uv.interval, uv.review_count, uv.status, uv.next_review
+       FROM sentences s
+       JOIN sentence_words sw ON sw.sentence_id = s.id AND sw.word_id = ?
+       JOIN user_vocab uv ON uv.sentence_id = s.id AND uv.user_id = ? AND uv.word_id = ?
+       WHERE s.is_word_only = 1`
+    )
+    .get(wordId, userId, wordId) as
+    | { sid: number; interval: number; review_count: number; status: string; next_review: string | null }
+    | undefined;
+  if (!ph) return;
+  const real = db
+    .prepare("SELECT interval, review_count, status, next_review FROM user_vocab WHERE user_id=? AND word_id=? AND sentence_id=?")
+    .get(userId, wordId, realSentenceId) as
+    | { interval: number; review_count: number; status: string; next_review: string | null }
+    | undefined;
+  const better = (a: string, b: string): string => (a === "mastered" ? a : b === "mastered" ? b : a === "candidate" ? a : b);
+  if (real) {
+    db.prepare(
+      "UPDATE user_vocab SET interval=?, review_count=?, status=?, next_review=? WHERE user_id=? AND word_id=? AND sentence_id=?"
+    ).run(
+      Math.max(real.interval, ph.interval),
+      Math.max(real.review_count, ph.review_count),
+      better(real.status, ph.status),
+      real.next_review ?? ph.next_review,
+      userId, wordId, realSentenceId
+    );
+  } else {
+    db.prepare(
+      "INSERT INTO user_vocab (user_id, word_id, sentence_id, created_at, interval, review_count, next_review, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    ).run(userId, wordId, realSentenceId, new Date().toISOString(), ph.interval, ph.review_count, ph.next_review, ph.status);
+  }
+  db.prepare("DELETE FROM user_vocab WHERE user_id=? AND word_id=? AND sentence_id=?").run(userId, wordId, ph.sid);
 }

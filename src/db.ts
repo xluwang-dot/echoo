@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import { DatabaseSync } from "node:sqlite";
 import { SCHEMA_SQL } from "./db/schema.js";
+import { WORD_LESSONS } from "./data/wordLessons.js";
 
 export const DATA_DIR = path.join(import.meta.dirname, "..", "data");
 export const DB_PATH = path.join(DATA_DIR, "word_typer.db");
@@ -37,6 +38,10 @@ const MIGRATIONS: [string, string, string][] = [
   ["users", "level", "INTEGER DEFAULT 1"],
   ["sentences", "prev_en", "TEXT"], // T058
   ["sentences", "next_en", "TEXT"], // T058
+  // T069：听写课序 + 占位句标记
+  ["words", "lesson_no", "INTEGER"],
+  ["words", "lesson_pos", "INTEGER"],
+  ["sentences", "is_word_only", "INTEGER DEFAULT 0"],
 ];
 
 function migrate(db: DatabaseSync): void {
@@ -53,6 +58,18 @@ function migrate(db: DatabaseSync): void {
            CREATE INDEX IF NOT EXISTS idx_test_records_user ON test_records(user_id, sentence_id);`);
 }
 
+// T069：课序回填（幂等：仅未设置时写入；数据内置，远程无 res/ 也可迁移）
+function backfillLessonOrder(db: DatabaseSync): void {
+  const missing = db
+    .prepare("SELECT COUNT(*) AS c FROM words WHERE lesson_no IS NULL OR lesson_pos IS NULL")
+    .get() as { c: number };
+  if (missing.c === 0) return;
+  const stmt = db.prepare("UPDATE words SET lesson_no=?, lesson_pos=? WHERE word=?");
+  for (const [word, [ln, pos]] of Object.entries(WORD_LESSONS)) {
+    stmt.run(ln, pos, word);
+  }
+}
+
 export function initDb(databasePath: string = DB_PATH): DatabaseSync {
   fs.mkdirSync(path.dirname(databasePath), { recursive: true });
   if (db && dbPath === databasePath) return db;
@@ -62,6 +79,7 @@ export function initDb(databasePath: string = DB_PATH): DatabaseSync {
   db.exec("PRAGMA foreign_keys=ON");
   db.exec(SCHEMA_SQL);
   migrate(db);
+  backfillLessonOrder(db); // T069：NCE 课序（听写顺序）
   return db;
 }
 

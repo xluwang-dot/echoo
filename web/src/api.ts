@@ -11,6 +11,7 @@ export interface Sentence {
   sentenceId: number;
   zh: string;
   en: string;
+  is_word_only?: boolean; // T069：占位句（听音拼写）
   prev_en?: string | null; // T058：课内上一句（对话语境提示）
   next_en?: string | null; // T058：课内下一句
   tokens: Token[];
@@ -110,8 +111,13 @@ export const api = {
   dueWords: () => req<{ words: VocabStateItem[] }>("GET", "/api/practice/due-words"),
   vocabState: (wordIds: number[]) => req<{ words: VocabStateItem[] }>("POST", "/api/practice/vocab-state", { wordIds }),
 
-  start: (targetCount: number, mode?: "practice" | "review" | "test", scope?: string, includeSentenceIds?: number[]) =>
+  start: (targetCount: number, mode?: "practice" | "review" | "test" | "dictation", scope?: string, includeSentenceIds?: number[]) =>
     req<StartResult>("POST", "/api/practice/start", { targetCount, mode, scope, includeSentenceIds }),
+  // T069 听写
+  dictationTiming: () => req<{ replay2: number; replay3: number; autoNext: number }>("GET", "/api/practice/dictation-timing"),
+  dictationNext: () => req<{ done: boolean; next?: Sentence }>("POST", "/api/practice/next", {}),
+  completeDictation: (wrongWordIds: number[]) =>
+    req<{ ok: boolean; added: number }>("POST", "/api/practice/complete-dictation", { wrongWordIds }),
   check: (char: string) => req<CheckResult>("POST", "/api/practice/check", { char }),
   hint: () => req<{ word: string; sentenceDone: boolean }>("POST", "/api/practice/hint", {}),
   backspace: () => req<{ typed: string }>("POST", "/api/practice/backspace", {}),

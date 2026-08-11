@@ -4,7 +4,7 @@ import { Router, Request, Response, NextFunction } from "express";
 import type { DatabaseSync } from "node:sqlite";
 import { getDb } from "../db.js";
 import { requireAuth } from "./auth.js";
-import { getSentenceWithTokens, completeSentence, getDueCount, aggregateVocabState, getDueWords, getMasteryCount, getUserLevel, updateUserLevel, isLevelUpPassed, isLevelTestReady } from "../practice.js";
+import { getSentenceWithTokens, completeSentence, getDueCount, aggregateVocabState, getDueWords, getMasteryCount, getUserLevel, updateUserLevel, isLevelUpPassed, isLevelTestReady, DICTATION_TIMING, getOrCreateWordSentence, addDays } from "../practice.js";
 import { wordState } from "../checker.js";
 import { createSession, getSession, clearSession, elapsedMs } from "../practiceSession.js";
 import { finishSession as persistSession } from "../practice.js";
@@ -62,7 +62,7 @@ export function practiceRouter(db?: DatabaseSync): Router {
       return;
     }
     const m = req.body?.mode;
-    const mode = m === "review" || m === "test" ? m : "practice";
+    const mode = m === "review" || m === "test" || m === "dictation" ? m : "practice"; // T069：听写模式
     // 测试范围（T028）
     const scope = ["all", "near", "fail", "mastered", "levelup"].includes(req.body?.scope) ? req.body.scope : "all"; // T053b
     // T037：立即复习必含的句子（当前练习入本句）
@@ -84,7 +84,12 @@ export function practiceRouter(db?: DatabaseSync): Router {
     if (state.sentenceIds.length === 0) {
       clearSession(req.session.userId!);
       res.status(400).json({
-        error: mode === "review" ? "生词本暂无内容，先去「练习」收集生词吧" : "暂无生词可测，先去「练习」收集生词吧",
+        error:
+          mode === "review"
+            ? "生词本暂无内容，先去「练习」收集生词吧"
+            : mode === "dictation"
+              ? "当前册暂无未听写单词"
+              : "暂无生词可测，先去「练习」收集生词吧",
       });
       return;
     }
@@ -98,6 +103,9 @@ export function practiceRouter(db?: DatabaseSync): Router {
         sentenceId: cur.sentenceId,
         zh: cur.sentence.zh,
         en: cur.sentence.en,
+        is_word_only: cur.sentence.is_word_only, // T069：占位句标记（前端听音拼写）
+        prev_en: cur.sentence.prev_en,
+        next_en: cur.sentence.next_en,
         tokens: cur.sentence.tokens,
         wordIdx: state.wordIdx,
       },
@@ -261,6 +269,49 @@ export function practiceRouter(db?: DatabaseSync): Router {
   });
 
   // 手动结束/中断
+  // T069：听写——词间推进（无落库；拼对词不入本不记状态）
+  router.post("/next", requireAuth, (req, res) => {
+    const state = getSession(req.session.userId!);
+    if (!state) {
+      res.status(409).json({ error: "没有进行中的练习" });
+      return;
+    }
+    state.idx += 1;
+    state.wordIdx = 0;
+    state.typed = "";
+    if (state.idx >= state.sentenceIds.length) {
+      res.json({ done: true });
+      return;
+    }
+    const s = getSentenceWithTokens(database, state.sentenceIds[state.idx], req.session.userId!);
+    res.json({ done: false, next: { ...s, wordIdx: 0 } });
+  });
+
+  // T069：听写结束——错误词统一入本（占位句），正确词无痕；清会话
+  router.post("/complete-dictation", requireAuth, (req, res) => {
+    const state = getSession(req.session.userId!);
+    if (!state) {
+      res.status(409).json({ error: "没有进行中的练习" });
+      return;
+    }
+    const userId = req.session.userId!;
+    const wrongWordIds: number[] = Array.isArray(req.body?.wrongWordIds) ? req.body.wrongWordIds : [];
+    const now = new Date().toISOString();
+    for (const wid of wrongWordIds) {
+      const psid = getOrCreateWordSentence(database, wid); // 幂等
+      database
+        .prepare(
+          "INSERT OR IGNORE INTO user_vocab (user_id, word_id, sentence_id, created_at, interval, review_count, next_review, status) VALUES (?, ?, ?, ?, 1, 0, ?, 'learning')"
+        )
+        .run(userId, wid, psid, now, addDays(1));
+      database
+        .prepare("INSERT INTO test_records (session_id, user_id, word_id, sentence_id, time, result) VALUES (?, ?, ?, ?, ?, 'hint')")
+        .run(state.sessionId, userId, wid, psid, now);
+    }
+    clearSession(userId);
+    res.json({ ok: true, added: wrongWordIds.length });
+  });
+
   router.post("/finish", requireAuth, (req, res) => {
     const state = getSession(req.session.userId!);
     if (!state) {
@@ -284,6 +335,11 @@ export function practiceRouter(db?: DatabaseSync): Router {
   });
 
   // 到期复习数量（T029，§4.1 登录到期横幅）
+  // T069：听写时间参数（3s 二次播报 / 8s 三次+词义 / 12s 自动下一词）
+  router.get("/dictation-timing", (req, res) => {
+    res.json(DICTATION_TIMING);
+  });
+
   router.get("/due-count", requireAuth, (req, res) => {
     res.json({ due: getDueCount(database, req.session.userId!) });
   });

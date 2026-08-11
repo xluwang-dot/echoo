@@ -3,6 +3,8 @@
 //       / word_status / practice_sessions / test_records / sentence_reports
 
 export const TABLES = [
+  "dictation_cursor",
+  "dictation_done",
   "words",
   "sentences",
   "sentence_words",
@@ -18,8 +20,8 @@ export const TABLES = [
 
 // 每表关键列（用于测试核对）
 export const EXPECTED_COLUMNS: Record<string, string[]> = {
-  words: ["id", "word", "freq", "is_name", "years", "level", "meaning", "phonetic", "audio_path"],
-  sentences: ["id", "en", "zh", "round", "topic", "section", "source", "level", "prev_en", "next_en"],
+  words: ["id", "word", "freq", "is_name", "years", "level", "meaning", "phonetic", "audio_path", "lesson_no", "lesson_pos"],
+  sentences: ["id", "en", "zh", "round", "topic", "section", "source", "level", "prev_en", "next_en", "is_word_only"],
   sentence_words: ["sentence_id", "word_id", "position", "is_bold"],
   audio: ["id", "sentence_id", "file_path", "duration_ms", "word_offsets"],
   users: ["id", "username", "password_hash", "nickname", "preferences", "level"],
@@ -29,6 +31,8 @@ export const EXPECTED_COLUMNS: Record<string, string[]> = {
   test_records: ["id", "session_id", "user_id", "word_id", "sentence_id", "time", "result"],
   sentence_reports: ["id", "sentence_id", "user_id", "time", "status"],
   levelup_history: ["id", "user_id", "from_level", "to_level", "time"],
+  dictation_cursor: ["user_id", "lesson_no", "lesson_pos", "updated_at"],
+  dictation_done: ["user_id", "word_id", "time"],
 };
 
 export const SCHEMA_SQL = `
@@ -41,7 +45,9 @@ CREATE TABLE IF NOT EXISTS words (
   level INTEGER DEFAULT 5,   -- T047：1~4=新概念册级；5=编外
   meaning TEXT,              -- T047：词义
   phonetic TEXT,             -- T047：音标
-  audio_path TEXT            -- T047：词发音音频（相对项目根）
+  audio_path TEXT,           -- T047：词发音音频（相对项目根）
+  lesson_no INTEGER,         -- T069：NCE 全局课号 1-276（听写课序）
+  lesson_pos INTEGER         -- T069：课内位置（听写顺序）
 );
 
 CREATE TABLE IF NOT EXISTS sentences (
@@ -54,7 +60,8 @@ CREATE TABLE IF NOT EXISTS sentences (
   source TEXT,
   level INTEGER, -- T047：派生=句中所有词的最高 level（可空=未计算）
   prev_en TEXT,   -- T058：课内上一句（对话语境提示，可空）
-  next_en TEXT    -- T058：课内下一句（问句时提示答句，可空）
+  next_en TEXT,   -- T058：课内下一句（问句时提示答句，可空）
+  is_word_only INTEGER DEFAULT 0 -- T069：单词占位句（听写入本，无真实句子）
 );
 
 CREATE TABLE IF NOT EXISTS sentence_words (
@@ -155,4 +162,20 @@ CREATE TABLE IF NOT EXISTS sentence_reports (
   description TEXT,
   FOREIGN KEY (sentence_id) REFERENCES sentences(id) ON DELETE CASCADE,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- T069：听写游标（扫描位置，每用户一条）
+CREATE TABLE IF NOT EXISTS dictation_cursor (
+  user_id INTEGER PRIMARY KEY,
+  lesson_no INTEGER NOT NULL DEFAULT 0,
+  lesson_pos INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT
+);
+
+-- T069：已听写词（本轮扫描不重复；全册扫完自动重置）
+CREATE TABLE IF NOT EXISTS dictation_done (
+  user_id INTEGER NOT NULL,
+  word_id INTEGER NOT NULL,
+  time TEXT,
+  PRIMARY KEY (user_id, word_id)
 );`;
