@@ -814,3 +814,112 @@ describe("B0009 句子 token 保留原文大小写", () => {
     expect(got.tokens[1].word).toBe("afraid");
   });
 });
+
+// ============ T069 单词听写 ============
+describe("T069 单词听写", () => {
+  beforeEach(() => {
+    db.exec("DELETE FROM test_records; DELETE FROM practice_sessions; DELETE FROM sentence_reports; DELETE FROM sentence_words; DELETE FROM sentences; DELETE FROM words; DELETE FROM dictation_cursor; DELETE FROM user_vocab; DELETE FROM word_status;");
+    // 4 个带课序的词（课 1-4，每课 1 词）
+    db.prepare("INSERT INTO words (word, level, lesson_no, lesson_pos, audio_path, meaning, phonetic) VALUES (?, 1, 1, 10, 'a.mp3', '词一', '/p1/')").run("alpha");
+    db.prepare("INSERT INTO words (word, level, lesson_no, lesson_pos, audio_path, meaning, phonetic) VALUES (?, 1, 2, 20, 'b.mp3', '词二', '/p2/')").run("bravo");
+    db.prepare("INSERT INTO words (word, level, lesson_no, lesson_pos, audio_path, meaning, phonetic) VALUES (?, 1, 3, 30, 'c.mp3', '词三', '/p3/')").run("charlie");
+    db.prepare("INSERT INTO words (word, level, lesson_no, lesson_pos, audio_path, meaning, phonetic) VALUES (?, 2, 4, 40, 'd.mp3', '词四', '/p4/')").run("delta");
+    // 无音频词（课 5）
+    db.prepare("INSERT INTO words (word, level, lesson_no, lesson_pos, audio_path, meaning, phonetic) VALUES (?, 1, 5, 50, NULL, '无音', NULL)").run("echo");
+    // 人名（课 6，有音频）——听写应跳过
+    db.prepare("INSERT INTO words (word, level, lesson_no, lesson_pos, audio_path, is_name, meaning, phonetic) VALUES (?, 1, 6, 60, 'n.mp3', 1, '人名', NULL)").run("pauline");
+  });
+
+  it("getOrCreateWordSentence：占位句幂等创建", async () => {
+    const { getOrCreateWordSentence } = await import("../src/practice.js");
+    const wid = db.prepare("SELECT id FROM words WHERE word='alpha'").get() as { id: number };
+    const s1 = getOrCreateWordSentence(db, wid.id);
+    const s2 = getOrCreateWordSentence(db, wid.id);
+    expect(s1).toBe(s2); // 幂等：同词返回同占位句
+    const s = db.prepare("SELECT * FROM sentences WHERE id=?").get(s1) as any;
+    expect(s.is_word_only).toBe(1);
+    expect(s.en).toBe("alpha");
+    expect(s.zh).toBe("词一");
+    expect(s.level).toBe(1);
+  });
+
+  it("drawDictationSentenceIds：按课序抽、跳无音频、游标推进", async () => {
+    const { drawDictationSentenceIds } = await import("../src/practice.js");
+    const ids = drawDictationSentenceIds(db, userA, 3, 1); // level=1，抽 3 个
+    expect(ids).toHaveLength(3);
+    // 应抽到 alpha/bravo/charlie（课 1/2/3），跳过 echo（无音频）、delta（level2）、pauline（人名）
+    const words = ids.map((sid) => (db.prepare("SELECT en FROM sentences WHERE id=?").get(sid) as any).en);
+    expect(words).toEqual(["alpha", "bravo", "charlie"]);
+    // 游标推进到 charlie
+    const cur = db.prepare("SELECT * FROM dictation_cursor WHERE user_id=?").get(userA) as any;
+    expect(cur.lesson_no).toBe(3);
+    expect(cur.lesson_pos).toBe(30);
+  });
+
+  it("drawDictationSentenceIds：未入本过滤——已入本词不抽", async () => {
+    const { drawDictationSentenceIds, getOrCreateWordSentence } = await import("../src/practice.js");
+    // 把 bravo 入本（占位句）
+    const wid = (db.prepare("SELECT id FROM words WHERE word='bravo'").get() as any).id;
+    const psid = getOrCreateWordSentence(db, wid);
+    db.prepare("INSERT INTO user_vocab (user_id, word_id, sentence_id, created_at, interval, review_count, next_review, status) VALUES (?, ?, ?, ?, 1, 0, ?, 'learning')")
+      .run(userA, wid, psid, new Date().toISOString(), new Date(Date.now() + 86400000).toISOString());
+    const ids = drawDictationSentenceIds(db, userA, 4, 1);
+    const words = ids.map((sid) => (db.prepare("SELECT en FROM sentences WHERE id=?").get(sid) as any).en);
+    expect(words).not.toContain("bravo"); // 已入本 → 不抽
+  });
+
+  it("drawDictationSentenceIds：册内扫完回绕", async () => {
+    const { drawDictationSentenceIds } = await import("../src/practice.js");
+    // level=1 册只有 alpha/bravo/charlie/echo（echo 无音频）——先抽 3 个（游标到课3）
+    drawDictationSentenceIds(db, userA, 3, 1);
+    // 再抽——游标后无 level1 未入本词 → 回绕从头 → 抽到已入本？alpha/bravo/charlie 已抽过但未入本（听写不自动入本）
+    // 抽 2 个应回绕后仍抽 alpha/bravo
+    const ids = drawDictationSentenceIds(db, userA, 2, 1);
+    const words = ids.map((sid) => (db.prepare("SELECT en FROM sentences WHERE id=?").get(sid) as any).en);
+    expect(words).toContain("alpha");
+    expect(words.length).toBeGreaterThan(0);
+  });
+
+  it("completeSentence 错误词 → 占位句入本", async () => {
+    const { completeSentence, getOrCreateWordSentence } = await import("../src/practice.js");
+    const wid = (db.prepare("SELECT id FROM words WHERE word='charlie'").get() as any).id;
+    const psid = getOrCreateWordSentence(db, wid);
+    const sid = startSession(db, userA, 1);
+    completeSentence(db, sid, userA, psid, [{ wordId: wid, result: "hint" }]);
+    const uv = db.prepare("SELECT * FROM user_vocab WHERE user_id=? AND word_id=? AND sentence_id=?").get(userA, wid, psid) as any;
+    expect(uv).toBeTruthy();
+    expect(uv.status).toBe("learning");
+    // 复习池应含该占位句
+    const { getReviewSentenceIds } = await import("../src/practice.js");
+    expect(getReviewSentenceIds(db, userA)).toContain(psid);
+  });
+
+  it("真实句入本覆盖占位句：删占位句记录 + 进度合并", async () => {
+    const { completeSentence, getOrCreateWordSentence } = await import("../src/practice.js");
+    const wid = (db.prepare("SELECT id FROM words WHERE word='charlie'").get() as any).id;
+    const psid = getOrCreateWordSentence(db, wid);
+    // 先入本（听写错误语义）→ 到期后复习 2 次（review_count 推进到 2）
+    const s0 = startSession(db, userA, 1);
+    completeSentence(db, s0, userA, psid, [{ wordId: wid, result: "hint" }]);
+    db.prepare("UPDATE user_vocab SET next_review=? WHERE user_id=? AND sentence_id=?").run("2026-01-01", userA, psid);
+    const s1 = startSession(db, userA, 1);
+    completeSentence(db, s1, userA, psid, [{ wordId: wid, result: "mastered" }]);
+    db.prepare("UPDATE user_vocab SET next_review=? WHERE user_id=? AND sentence_id=?").run("2026-01-01", userA, psid);
+    const s2 = startSession(db, userA, 1);
+    completeSentence(db, s2, userA, psid, [{ wordId: wid, result: "mastered" }]);
+    const uvPlace = db.prepare("SELECT * FROM user_vocab WHERE user_id=? AND sentence_id=?").get(userA, psid) as any;
+    expect(uvPlace.review_count).toBe(2);
+    // 真实句入本（覆盖）
+    const realSid = db.prepare("INSERT INTO sentences (en, zh) VALUES (?, ?)").run("charlie is here.", "charlie 在这。").lastInsertRowid as number;
+    db.prepare("INSERT INTO sentence_words (sentence_id, word_id, position) VALUES (?, ?, 0)").run(realSid, wid);
+    const s3 = startSession(db, userA, 1);
+    completeSentence(db, s3, userA, realSid, [{ wordId: wid, result: "mastered" }]);
+    // 占位句记录应删除
+    const uvPlace2 = db.prepare("SELECT * FROM user_vocab WHERE user_id=? AND sentence_id=?").get(userA, psid) as any;
+    expect(uvPlace2).toBeUndefined();
+    // 真实句记录应合并进度（review_count >= 2）
+    const uvReal = db.prepare("SELECT * FROM user_vocab WHERE user_id=? AND sentence_id=?").get(userA, realSid) as any;
+    expect(uvReal).toBeTruthy();
+    expect(uvReal.review_count).toBeGreaterThanOrEqual(2);
+  });
+});

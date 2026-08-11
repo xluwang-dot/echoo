@@ -57,7 +57,7 @@ function startTimers() {
   t12 = window.setTimeout(() => onTimeout(), timing.value.autoNext); // 12s 自动下一词
 }
 
-function nextWord(doneOk: boolean) {
+async function nextWord(doneOk: boolean) {
   clearTimers();
   typed.value = "";
   const i = idx.value;
@@ -67,6 +67,12 @@ function nextWord(doneOk: boolean) {
   if (idx.value >= words.value.length) {
     finish();
     return;
+  }
+  // T069：推进服务端 state 到下一词（check 判定依赖当前词；否则停在已拼完的词 → 409）
+  try {
+    await api.dictationNext();
+  } catch {
+    /* 会话异常忽略，最终 complete-dictation 会处理 */
   }
   startTimers();
 }
