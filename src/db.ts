@@ -58,6 +58,16 @@ function migrate(db: DatabaseSync): void {
            CREATE INDEX IF NOT EXISTS idx_test_records_user ON test_records(user_id, sentence_id);`);
 }
 
+// T069：人名回填（幂等：仅标记未标词；词义含人名特征——原始词表 is_name 标注不全）
+function backfillNames(db: DatabaseSync): void {
+  db.exec(`UPDATE words SET is_name = 1
+    WHERE is_name = 0 AND (
+      meaning LIKE '%人名%' OR meaning LIKE '%姓名%' OR meaning LIKE '%姓氏%'
+      OR meaning LIKE '%女子名%' OR meaning LIKE '%男子名%' OR meaning LIKE '%（人名）%'
+      OR meaning LIKE '%公司%' OR meaning LIKE '%作家%' OR meaning LIKE '%歌手%'
+    )`);
+}
+
 // T069：课序回填（幂等：仅未设置时写入；数据内置，远程无 res/ 也可迁移）
 function backfillLessonOrder(db: DatabaseSync): void {
   const missing = db
@@ -80,6 +90,7 @@ export function initDb(databasePath: string = DB_PATH): DatabaseSync {
   db.exec(SCHEMA_SQL);
   migrate(db);
   backfillLessonOrder(db); // T069：NCE 课序（听写顺序）
+  backfillNames(db); // T069：人名重标（听写跳人名）
   return db;
 }
 

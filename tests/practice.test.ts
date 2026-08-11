@@ -828,6 +828,10 @@ describe("T069 单词听写", () => {
     db.prepare("INSERT INTO words (word, level, lesson_no, lesson_pos, audio_path, meaning, phonetic) VALUES (?, 1, 5, 50, NULL, '无音', NULL)").run("echo");
     // 人名（课 6，有音频）——听写应跳过
     db.prepare("INSERT INTO words (word, level, lesson_no, lesson_pos, audio_path, is_name, meaning, phonetic) VALUES (?, 1, 6, 60, 'n.mp3', 1, '人名', NULL)").run("pauline");
+    // 词义含人名特征（is_name=0 但 meaning 含「人名」）——听写也应跳过（backfillNames 重标）
+    db.prepare("INSERT INTO words (word, level, lesson_no, lesson_pos, audio_path, meaning, phonetic) VALUES (?, 1, 7, 70, 'n2.mp3', '索菲（女子名）', '/s/')").run("sophie");
+    // 缺音标（课 8）——听写应跳过
+    db.prepare("INSERT INTO words (word, level, lesson_no, lesson_pos, audio_path, meaning, phonetic) VALUES (?, 1, 8, 80, 'n3.mp3', '直子', NULL)").run("naoko");
   });
 
   it("getOrCreateWordSentence：占位句幂等创建", async () => {
