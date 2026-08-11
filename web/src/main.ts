@@ -8,6 +8,7 @@ import PracticeView from "./views/PracticeView.vue";
 import VocabView from "./views/VocabView.vue";
 import SettingsView from "./views/SettingsView.vue";
 import DictationView from "./views/DictationView.vue";
+import LookupView from "./views/LookupView.vue";
 import { api } from "./api";
 
 const router = createRouter({
@@ -19,11 +20,12 @@ const router = createRouter({
     { path: "/vocab", component: VocabView },
     { path: "/settings", component: SettingsView },
     { path: "/dictation", component: DictationView }, // T069
+    { path: "/lookup", component: LookupView }, // T070 单词查询
   ],
 });
 
 // 守卫：需登录的页面
-const authPaths = ["/practice", "/vocab", "/settings", "/dictation"]; // T069
+const authPaths = ["/practice", "/vocab", "/settings", "/dictation", "/lookup"]; // T070
 router.beforeEach(async (to) => {
   if (authPaths.includes(to.path)) {
     try {

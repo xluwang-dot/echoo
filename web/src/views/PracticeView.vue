@@ -107,6 +107,12 @@ async function loadSummaryWords() {
 // 特效状态
 const slideState = ref<"idle" | "exit" | "enter">("idle");
 const streak = ref(0); // 连击：连续无提示完成的句子数
+// T070：顶栏单词查询
+const searchQ = ref("");
+function goLookup() {
+  const w = searchQ.value.trim();
+  if (w) router.push({ path: "/lookup", query: { word: w } });
+}
 
 // 片段：词（对应 token 下标）或原样文本（标点/空格/数字/连字符）
 interface Seg {
@@ -763,6 +769,14 @@ onUnmounted(() => {
     <div class="main">
       <div class="topbar">
         <span class="title">背单词 · 听写</span>
+        <div class="topbar-search">
+          <input
+            v-model="searchQ"
+            class="search-input"
+            placeholder="🔍 查询单词"
+            @keydown.enter="goLookup"
+          />
+        </div>
         <div class="topbar-right">
           <span v-if="streak >= 3" class="streak-badge">🔥 连击 ×{{ streak }}</span>
           <button class="ghost" @click="router.push('/settings')">⚙️ 设置</button>
@@ -1545,6 +1559,23 @@ onUnmounted(() => {
 }
 
 /* ---- 顶栏右侧 ---- */
+.topbar-search {
+  flex: 1;
+  max-width: 320px;
+  margin: 0 14px;
+}
+.search-input {
+  width: 100%;
+  padding: 7px 14px;
+  font-size: 14px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 999px;
+  outline: none;
+  background: #fff;
+}
+.search-input:focus {
+  border-color: #2563eb;
+}
 .topbar-right {
   display: flex;
   align-items: center;

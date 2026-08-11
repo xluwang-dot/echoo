@@ -139,4 +139,20 @@ export const api = {
   getVocabStats: () => req<VocabStats>("GET", "/api/vocab/stats"),
   deleteVocab: (wordId: number, sentenceId: number) =>
     reqDelete<{ ok: boolean }>(`/api/vocab/${wordId}/${sentenceId}`),
+
+  // T070 单词查询
+  vocabSearch: (q: string) =>
+    req<{ matches: { word: string; meaning: string | null; phonetic: string | null }[] }>(
+      "GET",
+      `/api/vocab/search?q=${encodeURIComponent(q)}`
+    ),
+  vocabLookup: (word: string) =>
+    req<{
+      word: { id: number; word: string; meaning: string | null; phonetic: string | null; level: number | null; lesson_no: number | null; audio_path: string | null };
+      sentences: { id: number; en: string; zh: string; level: number | null; in_vocab: boolean; status: string | null; next_review: string | null }[];
+      sm: { sentence_id: number; en: string; status: string; interval: number; review_count: number; next_review: string | null }[];
+      dictation: { done: boolean; cursorAfter: boolean };
+    }>("GET", `/api/vocab/lookup?word=${encodeURIComponent(word)}`),
+  vocabAdd: (wordId: number, sentenceId: number) =>
+    req<{ ok: boolean }>("POST", "/api/vocab/add", { wordId, sentenceId }),
 };

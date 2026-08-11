@@ -88,3 +88,105 @@ export function getMasteredVocab(db: DatabaseSync, userId: number): VocabRow[] {
     )
     .all(userId) as unknown as VocabRow[];
 }
+
+// ---------- T070 单词查询 ----------
+// 候选词：精确 → 前缀 → 包含（LIMIT 8）
+export function searchWords(db: DatabaseSync, q: string): { word: string; meaning: string | null; phonetic: string | null }[] {
+  return db
+    .prepare(
+      `SELECT word, meaning, phonetic FROM words
+       WHERE word LIKE ? COLLATE NOCASE
+       ORDER BY (word = ?) DESC, (word LIKE ?) DESC, word
+       LIMIT 8`
+    )
+    .all(`%${q}%`, q, `${q}%`) as { word: string; meaning: string | null; phonetic: string | null }[];
+}
+
+export interface LookupResult {
+  word: {
+    id: number;
+    word: string;
+    meaning: string | null;
+    phonetic: string | null;
+    level: number | null;
+    lesson_no: number | null;
+    lesson_pos: number | null;
+    audio_path: string | null;
+  };
+  sentences: {
+    id: number;
+    en: string;
+    zh: string;
+    level: number | null;
+    in_vocab: boolean;
+    status: string | null;
+    next_review: string | null;
+  }[];
+  sm: {
+    sentence_id: number;
+    en: string;
+    status: string;
+    interval: number;
+    review_count: number;
+    next_review: string | null;
+  }[];
+  dictation: { done: boolean; cursorAfter: boolean };
+}
+
+// 词详情 + 关联句子 + 听写/SM 状态（T070）
+export function lookupWord(db: DatabaseSync, userId: number, word: string): LookupResult | null {
+  const w = db
+    .prepare(
+      "SELECT id, word, meaning, phonetic, level, lesson_no, lesson_pos, audio_path FROM words WHERE word = ? COLLATE NOCASE"
+    )
+    .get(word) as LookupResult["word"] | undefined;
+  if (!w) return null;
+  const sentences = db
+    .prepare(
+      `SELECT s.id, s.en, s.zh, s.level,
+              uv.status, uv.next_review,
+              (uv.user_id IS NOT NULL) AS in_vocab
+       FROM sentence_words sw
+       JOIN sentences s ON s.id = sw.sentence_id
+       LEFT JOIN user_vocab uv ON uv.user_id = ? AND uv.word_id = ? AND uv.sentence_id = s.id
+       WHERE sw.word_id = ?
+       ORDER BY s.id`
+    )
+    .all(userId, w.id, w.id) as {
+    id: number;
+    en: string;
+    zh: string;
+    level: number | null;
+    in_vocab: number;
+    status: string | null;
+    next_review: string | null;
+  }[];
+  const sm = db
+    .prepare(
+      `SELECT uv.sentence_id, s.en, uv.status, uv.interval, uv.review_count, uv.next_review
+       FROM user_vocab uv JOIN sentences s ON s.id = uv.sentence_id
+       WHERE uv.user_id = ? AND uv.word_id = ?
+       ORDER BY uv.created_at`
+    )
+    .all(userId, w.id) as {
+    sentence_id: number;
+    en: string;
+    status: string;
+    interval: number;
+    review_count: number;
+    next_review: string | null;
+  }[];
+  const done = db.prepare("SELECT 1 FROM dictation_done WHERE user_id=? AND word_id=?").get(userId, w.id);
+  const cur = db
+    .prepare("SELECT lesson_no, lesson_pos FROM dictation_cursor WHERE user_id=?")
+    .get(userId) as { lesson_no: number; lesson_pos: number } | undefined;
+  const cursorAfter =
+    !!cur && w.lesson_no !== null &&
+    (w.lesson_no < cur.lesson_no || (w.lesson_no === cur.lesson_no && (w.lesson_pos ?? 0) <= cur.lesson_pos));
+  return {
+    word: w,
+    sentences: sentences.map((s) => ({ ...s, in_vocab: s.in_vocab === 1 })),
+    sm,
+    dictation: { done: !!done, cursorAfter },
+  };
+}
