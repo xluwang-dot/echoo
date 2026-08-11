@@ -14,7 +14,7 @@ dist/
 *.tsbuildinfo
 
 # 运行时产物
-data/
+/data/
 # 运行时日志
 logs/
 
