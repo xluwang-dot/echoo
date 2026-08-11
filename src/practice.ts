@@ -686,11 +686,11 @@ export const LEVEL_LESSON_RANGE: Record<number, [number, number]> = {
   4: [229, 276],
 };
 
-// 听写时间参数（可配置：env DICTATION_REPLAY2/REPLAY3/AUTONEXT，单位 ms）
+// 听写时间参数（可配置：env DICTATION_REPLAY2/REPLAY3/REVEAL，单位 ms）
 export const DICTATION_TIMING = {
-  replay2: Number(process.env.DICTATION_REPLAY2 ?? 3000),  // 第二次播报（3s）
-  replay3: Number(process.env.DICTATION_REPLAY3 ?? 8000),  // 第三次播报 + 显示词义（8s）
-  autoNext: Number(process.env.DICTATION_AUTONEXT ?? 12000), // 自动下一词（12s）
+  replay2: Number(process.env.DICTATION_REPLAY2 ?? 10000), // 第二次播报 + 音标（10s）
+  replay3: Number(process.env.DICTATION_REPLAY3 ?? 20000), // 第三次播报（20s）
+  reveal: Number(process.env.DICTATION_REVEAL ?? 30000),   // 揭示拼写 + 标记不会（30s，此后等回车）
 };
 
 // 占位句幂等创建（en=单词, zh=词义, is_word_only=1）

@@ -100,7 +100,16 @@ export function practiceRouter(db?: DatabaseSync): Router {
     // T069：听写一次性返回全部词（前端不调 next 推进服务端 state——否则输入判定错位）
     let words: unknown[] | undefined;
     if (mode === "dictation") {
-      words = state.sentenceIds.map((id) => getSentenceWithTokens(database, id, req.session.userId!));
+      // T069：words 带音标（提示用）
+      words = state.sentenceIds.map((id) => {
+        const s = getSentenceWithTokens(database, id, req.session.userId!);
+        const w = s?.tokens?.[0]
+          ? (database.prepare("SELECT phonetic FROM words WHERE id=?").get(s.tokens[0].word_id) as
+              | { phonetic: string | null }
+              | undefined)
+          : undefined;
+        return { ...s, phonetic: w?.phonetic ?? null };
+      });
     }
     res.json({
       total: state.sentenceIds.length, // T033：返回实际抽取句数（复习池不足 targetCount 时）

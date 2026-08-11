@@ -115,7 +115,7 @@ export const api = {
   start: (targetCount: number, mode?: "practice" | "review" | "test" | "dictation", scope?: string, includeSentenceIds?: number[]) =>
     req<StartResult>("POST", "/api/practice/start", { targetCount, mode, scope, includeSentenceIds }),
   // T069 听写
-  dictationTiming: () => req<{ replay2: number; replay3: number; autoNext: number }>("GET", "/api/practice/dictation-timing"),
+  dictationTiming: () => req<{ replay2: number; replay3: number; reveal: number }>("GET", "/api/practice/dictation-timing"),
   dictationNext: () => req<{ done: boolean; next?: Sentence }>("POST", "/api/practice/next", {}),
   completeDictation: (wrongWordIds: number[]) =>
     req<{ ok: boolean; added: number }>("POST", "/api/practice/complete-dictation", { wrongWordIds }),

@@ -892,9 +892,9 @@ describe("T069 听写接口", () => {
   it("dictation-timing 返回可配置时间", async () => {
     const r = await request(dapp).get("/api/practice/dictation-timing");
     expect(r.status).toBe(200);
-    expect(r.body.replay2).toBe(3000);
-    expect(r.body.replay3).toBe(8000);
-    expect(r.body.autoNext).toBe(12000);
+    expect(r.body.replay2).toBe(10000);
+    expect(r.body.replay3).toBe(20000);
+    expect(r.body.reveal).toBe(30000);
   });
 
   it("start mode=dictation：返回占位句（1 词）+ 游标推进", async () => {
