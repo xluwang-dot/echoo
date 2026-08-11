@@ -107,6 +107,7 @@ async function loadSummaryWords() {
 // 特效状态
 const slideState = ref<"idle" | "exit" | "enter">("idle");
 const streak = ref(0); // 连击：连续无提示完成的句子数
+const myName = ref("同学"); // T070：欢迎语昵称
 // T070：顶栏单词查询
 const searchQ = ref("");
 function goLookup() {
@@ -746,6 +747,7 @@ onMounted(async () => {
   // T029：登录后强引导——拉取到期数量与偏好，强制偏好时自动进入复习
   try {
     const me = await api.me();
+    myName.value = me.nickname || me.username || "同学"; // T070：欢迎语
     forceReview.value = me.preferences?.login_force_review === true;
     const d = await api.dueCount();
     dueBanner.value = d.due;
@@ -775,19 +777,23 @@ onUnmounted(() => {
           <button class="ghost" @click="onLogout">退出</button>
         </div>
       </div>
-      <!-- T070：搜索框独立一行（标题栏位置，下方留复习提示框） -->
-      <div class="search-bar">
-        <input
-          v-model="searchQ"
-          class="search-input"
-          placeholder="🔍 查询单词"
-          @keydown.enter="goLookup"
-        />
-      </div>
-
       <!-- 设置页 -->
       <!-- 三区首页 -->
       <div v-if="phase === 'menu'" class="menu">
+        <!-- T070：欢迎语 + 搜索框（标题栏位置） -->
+        <div class="welcome">
+          <p class="welcome-title">👋 你好，{{ myName }}</p>
+          <p class="welcome-sub">每天 10 句 · 轻松掌握单词</p>
+        </div>
+        <div class="search-bar">
+          <span class="search-icon">🔍</span>
+          <input
+            v-model="searchQ"
+            class="search-input"
+            placeholder="查询单词"
+            @keydown.enter="goLookup"
+          />
+        </div>
         <div v-if="bannerLoaded && dueBanner > 0" class="due-banner">
           <span>📢 有 <strong>{{ dueBanner }}</strong> 个到期词待复习（按记忆曲线）</span>
           <button class="danger" @click="onStart('review')">立即复习</button>
@@ -1036,6 +1042,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
+  background: linear-gradient(180deg, #eef2ff 0%, #f8fafc 40%, #f1f5f9 100%);
 }
 .main {
   flex: 1;
@@ -1053,7 +1060,12 @@ onUnmounted(() => {
 }
 .title {
   font-size: 22px;
-  font-weight: 700;
+  font-weight: 800;
+  background: linear-gradient(90deg, #1d4ed8, #3b6ef6);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  letter-spacing: 0.5px;
 }
 .ghost {
   background: transparent;
@@ -1063,31 +1075,58 @@ onUnmounted(() => {
 .menu {
   margin: auto;
   width: 100%;
-  max-width: 720px;
+  max-width: 760px;
   text-align: center;
 }
+.welcome {
+  margin-top: 12px;
+}
+.welcome-title {
+  font-size: 24px;
+  font-weight: 800;
+  color: #1f2430;
+}
+.welcome-sub {
+  margin-top: 4px;
+  font-size: 14px;
+  color: #94a3b8;
+}
 .menu-cards {
-  display: flex;
-  gap: 20px;
-  justify-content: center;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
 }
 .menu-card {
-  flex: 1;
   background: #fff;
-  border-radius: 16px;
-  padding: 36px 20px;
+  border-radius: 18px;
+  padding: 28px 18px 24px;
   cursor: pointer;
   box-shadow: 0 4px 16px rgba(31, 36, 48, 0.06);
-  transition: transform 0.15s, box-shadow 0.15s;
+  transition: transform 0.18s, box-shadow 0.18s;
+  position: relative;
+  overflow: hidden;
 }
 .menu-card:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 8px 24px rgba(31, 36, 48, 0.1);
+  transform: translateY(-4px);
+  box-shadow: 0 10px 28px rgba(31, 36, 48, 0.12);
 }
 .card-icon {
-  font-size: 40px;
-  margin-bottom: 12px;
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 14px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  background: linear-gradient(135deg, #eef2ff, #e0e7ff);
 }
+.menu-card:nth-child(1) .card-icon { background: linear-gradient(135deg, #e0f2fe, #bae6fd); }
+.menu-card:nth-child(2) .card-icon { background: linear-gradient(135deg, #dcfce7, #bbf7d0); }
+.menu-card:nth-child(3) .card-icon { background: linear-gradient(135deg, #fef9c3, #fde68a); }
+.menu-card:nth-child(4) .card-icon { background: linear-gradient(135deg, #e0e7ff, #c7d2fe); }
+.menu-card:nth-child(5) .card-icon { background: linear-gradient(135deg, #fce7f3, #fbcfe8); }
+.menu-card:nth-child(6) .card-icon { background: linear-gradient(135deg, #ffedd5, #fed7aa); }
 .menu-card h2 {
   font-size: 20px;
   font-weight: 700;
@@ -1561,21 +1600,35 @@ onUnmounted(() => {
 
 /* ---- 顶栏右侧 ---- */
 .search-bar {
-  width: min(480px, 92%);
-  margin: 12px auto 0;
+  position: relative;
+  width: min(460px, 100%);
+  margin: 18px auto 16px;
+}
+.search-icon {
+  position: absolute;
+  left: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 15px;
+  color: #94a3b8;
+  z-index: 1;
 }
 .search-input {
   width: 100%;
-  padding: 9px 18px;
-  font-size: 14px;
-  border: 1.5px solid #e2e8f0;
+  padding: 12px 18px 12px 42px;
+  font-size: 15px;
+  border: none;
   border-radius: 999px;
   outline: none;
   background: #fff;
-  text-align: center;
+  box-shadow: 0 4px 16px rgba(31, 36, 48, 0.08);
+  transition: box-shadow 0.2s;
+}
+.search-input::placeholder {
+  color: #94a3b8;
 }
 .search-input:focus {
-  border-color: #2563eb;
+  box-shadow: 0 4px 20px rgba(59, 110, 246, 0.25);
 }
 .topbar-right {
   display: flex;

@@ -181,10 +181,12 @@ onMounted(() => {
           <div v-if="!result.sentences.length" class="lookup-tip">该词暂无关联句子</div>
           <div v-for="s in result.sentences" :key="s.id" class="sent-row">
             <div class="sent-line">
-              <button class="speaker small" @click="playSentence(s.id)" title="播放句子">🔊</button>
               <span class="sent-en">{{ s.en }}</span>
-              <button v-if="!s.in_vocab" class="add-btn" @click="addToSm(s.id, result.word.id)" title="加入生词本">＋</button>
-              <span v-else class="added">已入本</span>
+              <span class="sent-ops">
+                <button class="speaker small" @click="playSentence(s.id)" title="播放句子">🔊</button>
+                <button v-if="!s.in_vocab" class="add-btn" @click="addToSm(s.id, result.word.id)" title="加入生词本">＋</button>
+                <span v-else class="added">已入本</span>
+              </span>
             </div>
             <div class="sent-zh">{{ s.zh }}</div>
           </div>
@@ -221,7 +223,14 @@ onMounted(() => {
 .sent-line {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
+}
+.sent-ops {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
 }
 .add-btn {
   background: none;
