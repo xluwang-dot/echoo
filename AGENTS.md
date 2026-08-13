@@ -25,7 +25,7 @@
 
 - 运行时数据 `data/`（git 排除）：`word_typer.db` + `data/audio/*.wav`，**二进制不入库**，靠本地拷贝带到部署机。
 - 空库自动 seed 读 `res/sentence_pool.json`（默认相对 CWD）。池结构：`meta{source,count}` + `sentences[]`（en/zh/round/topic/section/tokens/bold）。
-- **`res/`、`scripts/`、`tts_service/` 均被 git 排除且当前本机不存在**：全新 clone 无法 seed——`tests/seed.test.ts` 8 例因此必挂（其余 149 例绿）；冷启动空库 `npm run dev` 也会因读不到 pool 失败。重建种子/音频需从内容生产机拷贝这两个目录（见 README）。
+- **`res/`、`scripts/`、`tts_service/` 被 git 排除（本机/生产机保留，远程部署机不存在）**：seed 测试依赖 `res/sentence_pool.json`（clone 后该目录缺失时 `tests/seed.test.ts` 会失败，其余用例不受影响）；冷启动空库需 pool 文件。运行时数据全部在 `data/word_typer.db` + `data/audio/` + `data/nce/audio/`——**部署只需拷贝 `data/` 目录**（远程 clone 后 `./update_remote.sh` 自动迁移补列/回填课序与词音频路径）。课序数据内置 `src/data/wordLessons.ts`（进 git）。
 - 池规模：1405 句、2378 词（唯一词形）、10687 个 sentence_words；`audio.word_offsets` 暂未使用。
 - 内容分级（T047/T053）：words 有 level/meaning/phonetic/audio_path（词发音，路径相对项目根或绝对）；sentences 有 prev_en/next_en（对话语境提示）；用户有 level 与 `levelup_history` 表。`user_vocab` 主键 (user_id, word_id, sentence_id) —— 生词本条目 = 「单词+句子」多对多。
 

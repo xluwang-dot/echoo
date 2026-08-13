@@ -4,7 +4,7 @@ import { Router, Request, Response, NextFunction } from "express";
 import type { DatabaseSync } from "node:sqlite";
 import { getDb } from "../db.js";
 import { requireAuth } from "./auth.js";
-import { getSentenceWithTokens, completeSentence, getDueCount, aggregateVocabState, getDueWords, getMasteryCount, getUserLevel, updateUserLevel, isLevelUpPassed, isLevelTestReady, DICTATION_TIMING, getOrCreateWordSentence, addDays } from "../practice.js";
+import { getSentenceWithTokens, completeSentence, getDueCount, aggregateVocabState, getDueWords, getMasteryCount, getUserLevel, updateUserLevel, isLevelUpPassed, isLevelTestReady, DICTATION_TIMING, getOrCreateWordSentence, addDays, withTransaction } from "../practice.js";
 import { wordState } from "../checker.js";
 import { createSession, getSession, clearSession, elapsedMs } from "../practiceSession.js";
 import { finishSession as persistSession } from "../practice.js";
@@ -312,17 +312,19 @@ export function practiceRouter(db?: DatabaseSync): Router {
     const userId = req.session.userId!;
     const wrongWordIds: number[] = Array.isArray(req.body?.wrongWordIds) ? req.body.wrongWordIds : [];
     const now = new Date().toISOString();
-    for (const wid of wrongWordIds) {
-      const psid = getOrCreateWordSentence(database, wid); // 幂等
-      database
-        .prepare(
-          "INSERT OR IGNORE INTO user_vocab (user_id, word_id, sentence_id, created_at, interval, review_count, next_review, status) VALUES (?, ?, ?, ?, 1, 0, ?, 'learning')"
-        )
-        .run(userId, wid, psid, now, addDays(1));
-      database
-        .prepare("INSERT INTO test_records (session_id, user_id, word_id, sentence_id, time, result) VALUES (?, ?, ?, ?, ?, 'hint')")
-        .run(state.sessionId, userId, wid, psid, now);
-    }
+    withTransaction(database, () => {
+      for (const wid of wrongWordIds) {
+        const psid = getOrCreateWordSentence(database, wid); // 幂等
+        database
+          .prepare(
+            "INSERT OR IGNORE INTO user_vocab (user_id, word_id, sentence_id, created_at, interval, review_count, next_review, status) VALUES (?, ?, ?, ?, 1, 0, ?, 'learning')"
+          )
+          .run(userId, wid, psid, now, addDays(1));
+        database
+          .prepare("INSERT INTO test_records (session_id, user_id, word_id, sentence_id, time, result) VALUES (?, ?, ?, ?, ?, 'hint')")
+          .run(state.sessionId, userId, wid, psid, now);
+      }
+    });
     clearSession(userId);
     res.json({ ok: true, added: wrongWordIds.length });
   });
@@ -350,7 +352,7 @@ export function practiceRouter(db?: DatabaseSync): Router {
   });
 
   // 到期复习数量（T029，§4.1 登录到期横幅）
-  // T069：听写时间参数（3s 二次播报 / 8s 三次+词义 / 12s 自动下一词）
+  // T069：听写时间参数（10s 二次播报+音标 / 20s 三次播报 / 30s 揭示拼写+标记不会）
   router.get("/dictation-timing", (req, res) => {
     res.json(DICTATION_TIMING);
   });

@@ -7,10 +7,8 @@ import { SCHEMA_SQL } from "../src/db/schema.js";
 import { hashPassword } from "../src/auth.js";
 import {
   addVocab,
-  removeVocabBySentence,
   getUserVocab,
   getVocabSentenceIds,
-  markMastered,
   getMasteredCount,
 } from "../src/vocab.js";
 
@@ -80,13 +78,6 @@ describe("T008 生词本数据层", () => {
     expect(foo1.zh).toContain("foo 和 bar");
   });
 
-  it("按句移除：该句所有词句对消失，他句不受影响", () => {
-    removeVocabBySentence(db, userA, sentence2);
-    const rows = getUserVocab(db, userA);
-    expect(rows.length).toBe(2); // foo/s1 + bar/s1，s2 的两条全没了
-    expect(rows.every((r) => r.sentence_id !== sentence2)).toBe(true);
-  });
-
   it("getVocabSentenceIds 返回去重句子 id", () => {
     addVocab(db, userA, wordFoo, sentence2);
     addVocab(db, userA, wordBar, sentence2);
@@ -108,22 +99,11 @@ describe("T008 生词本数据层", () => {
     expect(rowsB[0].word).toBe("baz");
   });
 
-  it("markMastered upsert：重复 mark 行数不变", () => {
-    markMastered(db, userA, wordFoo);
-    markMastered(db, userA, wordFoo);
-    const r = db
-      .prepare("SELECT COUNT(*) AS c FROM word_status WHERE user_id=? AND word_id=?")
-      .get(userA, wordFoo) as { c: number };
-    expect(r.c).toBe(1);
-    const row = db
-      .prepare("SELECT status FROM word_status WHERE user_id=? AND word_id=?")
-      .get(userA, wordFoo) as { status: string };
-    expect(row.status).toBe("mastered");
-  });
-
   it("getMasteredCount 统计正确且按用户隔离", () => {
-    markMastered(db, userA, wordBar);
-    markMastered(db, userB, wordFoo);
+    // getMasteredCount（vocab.ts）统计 word_status mastered
+    db.prepare("INSERT INTO word_status (user_id, word_id, status, updated_at) VALUES (?, ?, 'mastered', ?)").run(userA, wordFoo, new Date().toISOString());
+    db.prepare("INSERT INTO word_status (user_id, word_id, status, updated_at) VALUES (?, ?, 'mastered', ?)").run(userA, wordBar, new Date().toISOString());
+    db.prepare("INSERT INTO word_status (user_id, word_id, status, updated_at) VALUES (?, ?, 'mastered', ?)").run(userB, wordFoo, new Date().toISOString());
     expect(getMasteredCount(db, userA)).toBe(2);
     expect(getMasteredCount(db, userB)).toBe(1);
   });

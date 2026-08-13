@@ -19,11 +19,6 @@ export function addVocab(db: DatabaseSync, userId: number, wordId: number, sente
   ).run(userId, wordId, sentenceId, new Date().toISOString());
 }
 
-// 移除该句下所有词句对（需求 §3.2.3：抽中句整句拼对 → 该句所有词句对一并移除）
-export function removeVocabBySentence(db: DatabaseSync, userId: number, sentenceId: number): void {
-  db.prepare("DELETE FROM user_vocab WHERE user_id = ? AND sentence_id = ?").run(userId, sentenceId);
-}
-
 // 移除单条词句对（按需）
 export function removeVocab(db: DatabaseSync, userId: number, wordId: number, sentenceId: number): void {
   db.prepare("DELETE FROM user_vocab WHERE user_id = ? AND word_id = ? AND sentence_id = ?").run(
@@ -52,14 +47,6 @@ export function getVocabSentenceIds(db: DatabaseSync, userId: number): number[] 
     .prepare("SELECT DISTINCT sentence_id FROM user_vocab WHERE user_id = ?")
     .all(userId) as { sentence_id: number }[];
   return rows.map((r) => r.sentence_id);
-}
-
-// 已掌握（upsert；仅统计展示，不参与抽取）
-export function markMastered(db: DatabaseSync, userId: number, wordId: number): void {
-  db.prepare(
-    `INSERT INTO word_status (user_id, word_id, status, updated_at) VALUES (?, ?, 'mastered', ?)
-     ON CONFLICT(user_id, word_id) DO UPDATE SET status='mastered', updated_at=excluded.updated_at`
-  ).run(userId, wordId, new Date().toISOString());
 }
 
 export function getMastered(db: DatabaseSync, userId: number): { word_id: number }[] {

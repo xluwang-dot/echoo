@@ -1,6 +1,7 @@
 // 练习核心：抽取 + 会话 + 结果落库（T009）
 // 数据层 + 业务逻辑（无 HTTP）；判定纯函数在 checker.ts。
 import type { DatabaseSync } from "node:sqlite";
+import { getVocabSentenceIds } from "./vocab.js"; // T071：生词本句集复用（同查询不写两遍）
 
 export type WordResult = "mastered" | "hint" | "test_fail";
 
@@ -42,6 +43,15 @@ export function getNameSentenceIds(db: DatabaseSync): Set<number> {
   return new Set(rows.map((r) => r.sentence_id));
 }
 
+// T071：句子等级 map（一次查询，抽句多分支复用——避免 start 时 4 次全表扫）
+function getSentenceLevelMap(db: DatabaseSync): Map<number, number | null> {
+  const m = new Map<number, number | null>();
+  for (const r of db.prepare("SELECT id, level FROM sentences").all() as { id: number; level: number | null }[]) {
+    m.set(r.id, r.level);
+  }
+  return m;
+}
+
 // 生词本涉及的句子 id
 // 被报告句子 id（≥1 次报告即进入规避池；句子问题对所有用户一致）
 export function getReportedSentenceIds(db: DatabaseSync): number[] {
@@ -52,11 +62,9 @@ export function getReportedSentenceIds(db: DatabaseSync): number[] {
 }
 
 // 生词本涉及的句子 id
+// T071：与 vocab.getVocabSentenceIds 同查询——委托复用，避免两处实现漂移
 export function getReviewSentenceIds(db: DatabaseSync, userId: number): number[] {
-  const rows = db
-    .prepare("SELECT DISTINCT sentence_id FROM user_vocab WHERE user_id = ?")
-    .all(userId) as { sentence_id: number }[];
-  return rows.map((r) => r.sentence_id);
+  return getVocabSentenceIds(db, userId);
 }
 
 // 随机抽 n 个不重复元素
@@ -259,6 +267,7 @@ export function drawSession(
   // 被报告句子：常规池剔除、放兜底末尾（§3.6 优先规避）
   const reported = new Set(getReportedSentenceIds(db));
   const named = getNameSentenceIds(db); // T069：人名句统一过滤
+  const lvMap = getSentenceLevelMap(db); // T071：等级 map 一次查询（多分支复用）
   let untested = getUntestedSentenceIds(db, userId).filter((id) => !reported.has(id) && !named.has(id));
   const review = getReviewSentenceIds(db, userId).filter((id) => !reported.has(id) && !named.has(id));
   const tested = getTestedSentenceIds(db, userId).filter((id) => !reported.has(id) && !named.has(id));
@@ -266,10 +275,6 @@ export function drawSession(
   // T053a：按用户等级过滤未测试池（混合模式）
   const level = config.level ?? 0;
   if (level >= 1) {
-    const lvMap = new Map<number, number | null>();
-    for (const r of db.prepare("SELECT id, level FROM sentences").all() as { id: number; level: number | null }[]) {
-      lvMap.set(r.id, r.level);
-    }
     const lvOf = (id: number) => lvMap.get(id); // null=通用句（放行）
     const okLv = (id: number, lv: number) => lvOf(id) === null || lvOf(id) === lv;
     if (level === 1) {
@@ -313,10 +318,6 @@ export function drawSession(
   let fromNew = sample(untested, newCount);
   // T053a：混合模式 1:1 —— prev 未测试句与 cur 新句各取一半
   if (level > 1) {
-    const lvMap = new Map<number, number | null>();
-    for (const r of db.prepare("SELECT id, level FROM sentences").all() as { id: number; level: number | null }[]) {
-      lvMap.set(r.id, r.level);
-    }
     const lvOf = (id: number) => lvMap.get(id);
     const okLv = (id: number, lv: number) => lvOf(id) === null || lvOf(id) === lv;
     const prevHalf = sample(untested.filter((id) => okLv(id, level - 1)), Math.ceil(newCount / 2));
@@ -348,11 +349,7 @@ export function drawSession(
   // 补齐顺序：未测试剩余 → 生词本剩余 → 已测试剩余 → 被报告句子（§3.6 优先规避，常规池耗尽才用）
   // T053a：补齐池同样按等级过滤（用户只练已解锁级别）
   const inLevelPool = level >= 1 ? (() => {
-    const lvMap = new Map<number, number | null>();
-    for (const r of db.prepare("SELECT id, level FROM sentences").all() as { id: number; level: number | null }[]) {
-      lvMap.set(r.id, r.level);
-    }
-    const lvOf = (id: number) => lvMap.get(id);
+    const lvOf = (id: number) => lvMap.get(id); // T071：复用顶部一次查询
     const okLv = (id: number, lv: number) => lvOf(id) === null || lvOf(id) === lv;
     return {
       // 新句/生词本：混合级别（level-1 + level）
@@ -412,6 +409,19 @@ export function finishSession(db: DatabaseSync, sessionId: number, doneCount: nu
 
 // 记录单词结果：mastered → 词句对间隔推进（达阈值标掌握）；hint → 入本/重置。始终写 test_records。
 // T027：不再「整句拼对即移除」，掌握判定由词句对连续成功驱动（§3.2.3）
+// T071：事务包裹（中途异常回滚，保证落库一致性）
+export function withTransaction<T>(db: DatabaseSync, fn: () => T): T {
+  db.exec("BEGIN");
+  try {
+    const r = fn();
+    db.exec("COMMIT");
+    return r;
+  } catch (e) {
+    db.exec("ROLLBACK");
+    throw e;
+  }
+}
+
 // T064：返回处理后 status（mastered 分支），供 completeSentence 判定掌握推进，避免重复查询
 export function recordWord(
   db: DatabaseSync,
@@ -508,12 +518,14 @@ export function completeSentence(
 ): number[] {
   // T045：返回本次新标记 mastered 的词（candidate → mastered，用于前端掌握特效）
   const masteredWordIds: number[] = [];
-  for (const o of outcomes) {
-    const after = recordWord(db, sessionId, userId, o.wordId, sentenceId, o.result);
-    // T064：recordWord 已返回处理后 status——candidate → mastered 视为本次新掌握
-    if (o.result === "mastered" && after === "mastered") masteredWordIds.push(o.wordId);
-  }
-  return masteredWordIds;
+  return withTransaction(db, () => {
+    for (const o of outcomes) {
+      const after = recordWord(db, sessionId, userId, o.wordId, sentenceId, o.result);
+      // T064：recordWord 已返回处理后 status——candidate → mastered 视为本次新掌握
+      if (o.result === "mastered" && after === "mastered") masteredWordIds.push(o.wordId);
+    }
+    return masteredWordIds;
+  });
 }
 
 // T045：当前已掌握词句对总数（里程碑判定用）
@@ -640,10 +652,7 @@ export function drawLevelupSentenceIds(
   targetCount: number
 ): { sentenceIds: number[]; autoLevelUp: boolean } {
   const level = getUserLevel(db, userId);
-  const lvMap = new Map<number, number | null>();
-  for (const r of db.prepare("SELECT id, level FROM sentences").all() as { id: number; level: number | null }[]) {
-    lvMap.set(r.id, r.level);
-  }
+  const lvMap = getSentenceLevelMap(db); // T071：一次查询
   const lvOf = (id: number) => lvMap.get(id) ?? null;
   // ① 当前级未练习句
   const untested = getUntestedSentenceIds(db, userId).filter((id) => lvOf(id) === level);
