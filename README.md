@@ -45,7 +45,7 @@
 
 - Node.js ≥ 22（内置 `node:sqlite`）
 - Python 3（仅 TTS 生成需要）
-- [可选] MIMO API Key（合成音频用；库内置的 `data/audio/` 已含全量 1405 句音频则无需）
+- [可选] MIMO API Key（合成音频用；库内置的 `data/audio/` 已含全量 5525 句音频则无需）
 
 ### 安装
 
@@ -83,7 +83,7 @@ npm run build --prefix web       # 前端产物在 web/dist/
 
 > `tts_service/` 为本地内容生产工具（不入库，需从本地拷贝；依赖 MIMO API Key）。
 
-全量音频已预生成于 `data/audio/`（1405 句）。如需自行合成/补齐：
+全量音频已预生成于 `data/audio/`（5525 句）+ `data/nce/audio/`（词音频 8700+）。如需自行合成/补齐：
 
 ```bash
 cd tts_service
@@ -115,7 +115,18 @@ cd tts_service && python3 -m unittest test_gen_audio   # 本地 TTS 工具测试
 | POST | `/api/practice/complete` | 完成当前句（body: `wordResults`） |
 | POST | `/api/practice/finish` | 结束练习 |
 | POST | `/api/practice/report` | 报告句子有误（body: `{sentenceId, description?}`，description 为可选错误描述，入待处理队列） |
+| POST | `/api/practice/start` | 支持 `mode`：`review` 复习 / `test` 测试（`scope`: all/near/fail/mastered/levelup）/ `dictation` 听写 |
+| POST | `/api/practice/next` | 听写词间推进（无落库） |
+| POST | `/api/practice/complete-dictation` | 听写结束：错误词占位句入本 |
+| GET | `/api/practice/dictation-timing` | 听写时间参数（10s/20s/30s，env 可覆盖） |
+| GET | `/api/practice/due-count` | 到期复习数（登录横幅） |
+| GET | `/api/practice/levelup-status` | 升级测试状态 |
+| GET | `/api/vocab/search?q=` | 单词候选（精确→前缀→包含） |
+| GET | `/api/vocab/lookup?word=` | 词详情 + 听写/SM 状态 + 关联句子 |
+| POST | `/api/vocab/add` | 指定句子入本（body: `{wordId, sentenceId}`） |
+| GET | `/api/auth/footprint` | 7 天操作聚合 |
 | GET | `/api/audio/:sentenceId` | 整句朗读 WAV（无需登录） |
+| GET | `/api/audio/word/:word` | 词发音（无需登录） |
 
 除 `/api/audio/*` 外均需登录（session Cookie）。
 
