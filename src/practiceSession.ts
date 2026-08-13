@@ -12,6 +12,7 @@ export interface SessionState {
   typed: string; // 当前词已输入字符
   startedAt: number; // Date.now()
   lastActive: number; // T059：最后活动时间（滑动过期）
+  sentenceStartAt: number; // T072：当前句开始时间（升级测试超时服务端校验）
   mode: "practice" | "review" | "test" | "dictation"; // 练习/复习/测试/听写模式
   scope?: TestScope; // 测试范围（T028）
 }
@@ -67,6 +68,7 @@ export function createSession(
     typed: "",
     startedAt: Date.now(),
     lastActive: Date.now(),
+    sentenceStartAt: Date.now(),
     mode,
     scope,
   };

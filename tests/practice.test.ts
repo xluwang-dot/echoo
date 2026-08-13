@@ -23,6 +23,7 @@ import {
   getDueCount,
   getRecentPracticeAccuracy,
   isLevelTestReady,
+  isLevelUpSentenceTimeout,
   drawLevelupSentenceIds,
   getUserLevel,
   updateUserLevel,
@@ -757,6 +758,15 @@ describe("T053b 升级测试（正确率/邀请/三级抽词/升级判定）", (
   const sidOf = (word: string) => (db.prepare("SELECT id FROM sentences WHERE en LIKE ?").get(word + "%") as { id: number }).id;
   const widOf = (word: string) => (db.prepare("SELECT id FROM words WHERE word=?").get(word) as { id: number }).id;
 
+  it("T072：升级抽句无副作用——下一级无可抽句时不解锁", () => {
+    // 用户当前级无句（所有句都测试过）→ 下一级也无句 → 返回空且不改等级
+    db.exec("DELETE FROM sentences; DELETE FROM words; DELETE FROM sentence_words;");
+    const lv0 = getUserLevel(db, userA);
+    const r = drawLevelupSentenceIds(db, userA, 5);
+    expect(r.sentenceIds).toEqual([]);
+    expect(getUserLevel(db, userA)).toBe(lv0); // 等级未变
+  });
+
   it("getRecentPracticeAccuracy：句子正确率（句内全 mastered 才算对）", () => {
     // 一轮练习 3 句：2 句全对 + 1 句 hint → 66.7%
     const sess = startSession(db, userA, 3);
@@ -936,5 +946,18 @@ describe("T069 单词听写", () => {
     const uvReal = db.prepare("SELECT * FROM user_vocab WHERE user_id=? AND sentence_id=?").get(userA, realSid) as any;
     expect(uvReal).toBeTruthy();
     expect(uvReal.review_count).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// ============ T072 升级超时 ============
+describe("T072 升级超时服务端校验", () => {
+  it("isLevelUpSentenceTimeout：短句未超时 / 超时限判真", () => {
+    const t0 = 1000000;
+    // 3 词句：时限 3×5×1500 = 22500ms
+    expect(isLevelUpSentenceTimeout({ en: "foo bar baz." }, t0, t0 + 10000)).toBe(false);
+    expect(isLevelUpSentenceTimeout({ en: "foo bar baz." }, t0, t0 + 23000)).toBe(true);
+    // 长句时限更长
+    const long = { en: "a b c d e f g h i j." };
+    expect(isLevelUpSentenceTimeout(long, t0, t0 + 40000)).toBe(false); // 10 词 → 75s
   });
 });

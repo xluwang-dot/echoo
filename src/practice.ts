@@ -670,15 +670,22 @@ export function drawLevelupSentenceIds(
   if (learning.length > 0) {
     return { sentenceIds: sample(learning.map((r) => r.sentence_id), targetCount), autoLevelUp: false };
   }
-  // ③ 全掌握 → 自动解锁下一级 + 抽下一级句
+  // ③ 全掌握 → 仅当「下一级有可抽句」才解锁（T072：抽句无副作用——空会话不再悄悄改等级）
   if (level < 4) {
-    updateUserLevel(db, userId, level + 1);
-    const next = db
-      .prepare("SELECT id FROM sentences WHERE level = ?")
-      .all(level + 1) as { id: number }[];
-    return { sentenceIds: sample(next.map((r) => r.id), targetCount), autoLevelUp: true };
+    const nextUntested = getUntestedSentenceIds(db, userId).filter((id) => lvOf(id) === level + 1);
+    if (nextUntested.length > 0) {
+      updateUserLevel(db, userId, level + 1);
+      return { sentenceIds: sample(nextUntested, targetCount), autoLevelUp: true };
+    }
+    return { sentenceIds: [], autoLevelUp: false };
   }
   return { sentenceIds: [], autoLevelUp: false };
+}
+
+// T072：升级测试句超时判定（句时限 = 词数×5s×150%；服务端权威——不再纯前端倒计时）
+export function isLevelUpSentenceTimeout(sentence: { en: string }, startedAt: number, now = Date.now()): boolean {
+  const words = sentence.en.split(/\s+/).length;
+  return now - startedAt > words * 5 * 1500;
 }
 
 // 升级测试通过判定：该 session 句子正确率 ≥60%

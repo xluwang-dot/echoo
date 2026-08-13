@@ -4,7 +4,7 @@ import { Router, Request, Response, NextFunction } from "express";
 import type { DatabaseSync } from "node:sqlite";
 import { getDb } from "../db.js";
 import { requireAuth } from "./auth.js";
-import { getSentenceWithTokens, completeSentence, getDueCount, aggregateVocabState, getDueWords, getMasteryCount, getUserLevel, updateUserLevel, isLevelUpPassed, isLevelTestReady, DICTATION_TIMING, getOrCreateWordSentence, addDays, withTransaction } from "../practice.js";
+import { getSentenceWithTokens, completeSentence, getDueCount, aggregateVocabState, getDueWords, getMasteryCount, getUserLevel, updateUserLevel, isLevelUpPassed, isLevelTestReady, isLevelUpSentenceTimeout, DICTATION_TIMING, getOrCreateWordSentence, addDays, withTransaction } from "../practice.js";
 import { wordState } from "../checker.js";
 import { createSession, getSession, clearSession, elapsedMs } from "../practiceSession.js";
 import { finishSession as persistSession } from "../practice.js";
@@ -234,7 +234,14 @@ export function practiceRouter(db?: DatabaseSync): Router {
       res.status(409).json({ error: "没有进行中的练习" });
       return;
     }
-    const wordResults = Array.isArray(req.body?.wordResults) ? req.body.wordResults : [];
+    let wordResults = Array.isArray(req.body?.wordResults) ? req.body.wordResults : [];
+    // T072：升级测试超时服务端校验（句时限 = 词数×5s×150%；超时整句算错——不再纯前端）
+    if (state.scope === "levelup" && state.mode === "test") {
+      const curSentence = getSentenceWithTokens(database, state.sentenceIds[state.idx], req.session.userId!);
+      if (curSentence && isLevelUpSentenceTimeout(curSentence, state.sentenceStartAt)) {
+        wordResults = wordResults.map((w: { wordId: number; result: string }) => ({ ...w, result: "test_fail" }));
+      }
+    }
     const sentenceId = state.sentenceIds[state.idx];
     // T045：新掌握词（前端掌握特效）
     const masteredWordIds = completeSentence(database, state.sessionId, req.session.userId!, sentenceId, wordResults);
@@ -243,6 +250,7 @@ export function practiceRouter(db?: DatabaseSync): Router {
     state.idx += 1;
     state.wordIdx = 0;
     state.typed = "";
+    state.sentenceStartAt = Date.now(); // T072：下一句计时起点
     const done = state.idx >= state.sentenceIds.length;
     if (done) {
       persistSession(database, state.sessionId, state.sentenceIds.length, elapsedMs(state));
