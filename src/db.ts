@@ -58,14 +58,32 @@ function migrate(db: DatabaseSync): void {
            CREATE INDEX IF NOT EXISTS idx_test_records_user ON test_records(user_id, sentence_id);`);
 }
 
-// T069：人名回填（幂等：仅标记未标词；词义含人名特征——原始词表 is_name 标注不全）
+// 称呼白名单（词义无（人名）特征但属称呼——复习/听写跳过）
+const TITLE_WORDS = ["mr", "mrs", "miss", "ms", "sir", "dr", "madam", "madame", "prof"];
+
+// T069/T072：人名回填（幂等）。精确化：
+//  - 正向：仅「词义开头 40 字符」含人名特征（避免多义词末尾人名义项误伤，如 parade「游行…（人名）」）
+//  - 称呼白名单强制标记
+//  - 反向：已标但词义开头无特征（且非称呼）→ 回滚（误标恢复普通词）
 function backfillNames(db: DatabaseSync): void {
   db.exec(`UPDATE words SET is_name = 1
     WHERE is_name = 0 AND (
-      meaning LIKE '%人名%' OR meaning LIKE '%姓名%' OR meaning LIKE '%姓氏%'
-      OR meaning LIKE '%女子名%' OR meaning LIKE '%男子名%' OR meaning LIKE '%（人名）%'
-      OR meaning LIKE '%公司%' OR meaning LIKE '%作家%' OR meaning LIKE '%歌手%'
+      substr(meaning, 1, 40) LIKE '%人名%' OR substr(meaning, 1, 40) LIKE '%姓名%'
+      OR substr(meaning, 1, 40) LIKE '%姓氏%' OR substr(meaning, 1, 40) LIKE '%女子名%'
+      OR substr(meaning, 1, 40) LIKE '%男子名%' OR substr(meaning, 1, 40) LIKE '%（人名）%'
+      OR substr(meaning, 1, 40) LIKE '%公司%' OR substr(meaning, 1, 40) LIKE '%作家%'
+      OR substr(meaning, 1, 40) LIKE '%歌手%'
     )`);
+  db.exec(`UPDATE words SET is_name = 1
+    WHERE is_name = 0 AND word IN (${TITLE_WORDS.map((w) => `'${w}'`).join(",")})`);
+  db.exec(`UPDATE words SET is_name = 0
+    WHERE is_name = 1 AND word NOT IN (${TITLE_WORDS.map((w) => `'${w}'`).join(",")})
+      AND meaning IS NOT NULL AND meaning != ''
+      AND substr(meaning, 1, 40) NOT LIKE '%人名%' AND substr(meaning, 1, 40) NOT LIKE '%姓名%'
+      AND substr(meaning, 1, 40) NOT LIKE '%姓氏%' AND substr(meaning, 1, 40) NOT LIKE '%女子名%'
+      AND substr(meaning, 1, 40) NOT LIKE '%男子名%' AND substr(meaning, 1, 40) NOT LIKE '%（人名）%'
+      AND substr(meaning, 1, 40) NOT LIKE '%公司%' AND substr(meaning, 1, 40) NOT LIKE '%作家%'
+      AND substr(meaning, 1, 40) NOT LIKE '%歌手%'`);
 }
 
 // T069：课序回填（幂等：仅未设置时写入；数据内置，远程无 res/ 也可迁移）
