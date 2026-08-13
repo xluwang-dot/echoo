@@ -769,7 +769,7 @@ function fetchDictationWords(
   return db
     .prepare(
       `SELECT id, lesson_no, lesson_pos FROM words
-       WHERE level = ? AND is_name = 0 AND audio_path IS NOT NULL AND audio_path != ''
+       WHERE level = ? AND is_name = 0 AND word NOT GLOB '[A-Z]*' AND audio_path IS NOT NULL AND audio_path != ''
          AND meaning IS NOT NULL AND meaning != '' AND phonetic IS NOT NULL AND phonetic != ''
          AND (lesson_no > ? OR (lesson_no = ? AND lesson_pos > ?))
          AND NOT EXISTS (SELECT 1 FROM user_vocab uv WHERE uv.user_id = ? AND uv.word_id = words.id)

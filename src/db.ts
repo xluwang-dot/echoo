@@ -84,6 +84,10 @@ function backfillNames(db: DatabaseSync): void {
       AND substr(meaning, 1, 40) NOT LIKE '%男子名%' AND substr(meaning, 1, 40) NOT LIKE '%（人名）%'
       AND substr(meaning, 1, 40) NOT LIKE '%公司%' AND substr(meaning, 1, 40) NOT LIKE '%作家%'
       AND substr(meaning, 1, 40) NOT LIKE '%歌手%'`);
+  // T072：真实人名/称呼首字母大写（符合英语习惯；取词按大写判断跳过）
+  db.exec(`UPDATE words
+    SET word = upper(substr(word, 1, 1)) || substr(word, 2)
+    WHERE is_name = 1 AND word GLOB '[a-z]*'`);
 }
 
 // T069：课序回填（幂等：仅未设置时写入；数据内置，远程无 res/ 也可迁移）
