@@ -5,6 +5,7 @@
 export const TABLES = [
   "dictation_cursor",
   "dictation_done",
+  "invite_codes",
   "words",
   "sentences",
   "sentence_words",
@@ -24,7 +25,7 @@ export const EXPECTED_COLUMNS: Record<string, string[]> = {
   sentences: ["id", "en", "zh", "round", "topic", "section", "source", "level", "prev_en", "next_en", "is_word_only"],
   sentence_words: ["sentence_id", "word_id", "position", "is_bold"],
   audio: ["id", "sentence_id", "file_path", "duration_ms", "word_offsets"],
-  users: ["id", "username", "password_hash", "nickname", "preferences", "level"],
+  users: ["id", "username", "password_hash", "nickname", "preferences", "level", "role", "status", "must_change_password"],
   user_vocab: ["user_id", "word_id", "sentence_id", "created_at", "interval", "review_count", "next_review", "status", "fail_count"],
   word_status: ["user_id", "word_id", "status", "updated_at"],
   practice_sessions: ["id", "user_id", "target_count", "start_time", "end_time", "done_count", "total_ms", "mode"],
@@ -33,6 +34,7 @@ export const EXPECTED_COLUMNS: Record<string, string[]> = {
   levelup_history: ["id", "user_id", "from_level", "to_level", "time"],
   dictation_cursor: ["user_id", "lesson_no", "lesson_pos", "updated_at"],
   dictation_done: ["user_id", "word_id", "time"],
+  invite_codes: ["id", "code", "enabled", "used_by", "used_at", "created_at"],
 };
 
 export const SCHEMA_SQL = `
@@ -90,7 +92,10 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   nickname TEXT,
   preferences TEXT,
-  level INTEGER DEFAULT 1 -- T053a：用户等级 1~4（解锁的内容级别）
+  level INTEGER DEFAULT 1, -- T053a：用户等级 1~4（解锁的内容级别）
+  role TEXT DEFAULT 'user', -- T074：admin/user（管理权限）
+  status TEXT DEFAULT 'active', -- T074：active/disabled（停用即踢下线）
+  must_change_password INTEGER DEFAULT 0 -- T074：首次登录强制改密
 );
 
 CREATE TABLE IF NOT EXISTS user_vocab (
@@ -178,4 +183,14 @@ CREATE TABLE IF NOT EXISTS dictation_done (
   word_id INTEGER NOT NULL,
   time TEXT,
   PRIMARY KEY (user_id, word_id)
+);
+
+-- T074：邀请码（注册必填；used_by 标记使用者，原子防重复）
+CREATE TABLE IF NOT EXISTS invite_codes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT NOT NULL UNIQUE,
+  enabled INTEGER DEFAULT 1,
+  used_by INTEGER,
+  used_at TEXT,
+  created_at TEXT
 );`;

@@ -55,7 +55,7 @@ export function practiceRouter(db?: DatabaseSync): Router {
   const database = db ?? getDb();
 
   // 开始练习（mode: "practice"=默认学新, "review"=到期复习, "test"=验收测试）
-  router.post("/start", requireAuth, (req, res) => {
+  router.post("/start", requireAuth(database), (req, res) => {
     const targetCount = Number(req.body?.targetCount);
     if (!Number.isInteger(targetCount) || targetCount <= 0 || targetCount > MAX_TARGET) {
       res.status(400).json({ error: `targetCount 需为 1~${MAX_TARGET} 的整数` });
@@ -128,7 +128,7 @@ export function practiceRouter(db?: DatabaseSync): Router {
   });
 
   // 提交当前词一个字符（服务端权威判定）
-  router.post("/check", requireAuth, (req, res) => {
+  router.post("/check", requireAuth(database), (req, res) => {
     const state = getSession(req.session.userId!);
     if (!state) {
       res.status(409).json({ error: "没有进行中的练习" });
@@ -170,7 +170,7 @@ export function practiceRouter(db?: DatabaseSync): Router {
   });
 
   // T035：将当前会话句子的指定词加入生词本（练习模式完成态点击单词）
-  router.post("/add-vocab", requireAuth, (req, res) => {
+  router.post("/add-vocab", requireAuth(database), (req, res) => {
     const state = getSession(req.session.userId!);
     if (!state) {
       res.status(409).json({ error: "没有进行中的练习" });
@@ -188,7 +188,7 @@ export function practiceRouter(db?: DatabaseSync): Router {
 
   // 提示词：当前词入生词本 + 返回词；词浅色提示，仍要求用户再输入一次
   // T028：测试模式禁用提示词（验收性质）
-  router.post("/hint", requireAuth, (req, res) => {
+  router.post("/hint", requireAuth(database), (req, res) => {
     const state = getSession(req.session.userId!);
     if (!state) {
       res.status(409).json({ error: "没有进行中的练习" });
@@ -215,7 +215,7 @@ export function practiceRouter(db?: DatabaseSync): Router {
   });
 
   // 退格：删除当前词已输入的最后字符（保持服务端权威判定）
-  router.post("/backspace", requireAuth, (req, res) => {
+  router.post("/backspace", requireAuth(database), (req, res) => {
     const state = getSession(req.session.userId!);
     if (!state) {
       res.status(409).json({ error: "没有进行中的练习" });
@@ -228,7 +228,7 @@ export function practiceRouter(db?: DatabaseSync): Router {
   });
 
   // 整句完成：上报各词结果落库，推进下一句或结束
-  router.post("/complete", requireAuth, (req, res) => {
+  router.post("/complete", requireAuth(database), (req, res) => {
     const state = getSession(req.session.userId!);
     if (!state) {
       res.status(409).json({ error: "没有进行中的练习" });
@@ -293,7 +293,7 @@ export function practiceRouter(db?: DatabaseSync): Router {
 
   // 手动结束/中断
   // T069：听写——词间推进（无落库；拼对词不入本不记状态）
-  router.post("/next", requireAuth, (req, res) => {
+  router.post("/next", requireAuth(database), (req, res) => {
     const state = getSession(req.session.userId!);
     if (!state) {
       res.status(409).json({ error: "没有进行中的练习" });
@@ -311,7 +311,7 @@ export function practiceRouter(db?: DatabaseSync): Router {
   });
 
   // T069：听写结束——错误词统一入本（占位句），正确词无痕；清会话
-  router.post("/complete-dictation", requireAuth, (req, res) => {
+  router.post("/complete-dictation", requireAuth(database), (req, res) => {
     const state = getSession(req.session.userId!);
     if (!state) {
       res.status(409).json({ error: "没有进行中的练习" });
@@ -337,7 +337,7 @@ export function practiceRouter(db?: DatabaseSync): Router {
     res.json({ ok: true, added: wrongWordIds.length });
   });
 
-  router.post("/finish", requireAuth, (req, res) => {
+  router.post("/finish", requireAuth(database), (req, res) => {
     const state = getSession(req.session.userId!);
     if (!state) {
       res.status(409).json({ error: "没有进行中的练习" });
@@ -350,7 +350,7 @@ export function practiceRouter(db?: DatabaseSync): Router {
   });
 
   // T053b：升级测试状态（等级 + 邀请是否激活 + 规则）
-  router.get("/levelup-status", requireAuth, (req, res) => {
+  router.get("/levelup-status", requireAuth(database), (req, res) => {
     const level = getUserLevel(database, req.session.userId!);
     res.json({
       level,
@@ -365,17 +365,17 @@ export function practiceRouter(db?: DatabaseSync): Router {
     res.json(DICTATION_TIMING);
   });
 
-  router.get("/due-count", requireAuth, (req, res) => {
+  router.get("/due-count", requireAuth(database), (req, res) => {
     res.json({ due: getDueCount(database, req.session.userId!) });
   });
 
   // 当前到期词聚合（T031：横幅「查看单词」弹窗）
-  router.get("/due-words", requireAuth, (req, res) => {
+  router.get("/due-words", requireAuth(database), (req, res) => {
     res.json({ words: getDueWords(database, req.session.userId!) });
   });
 
   // 指定词的聚合状态（T031：复习总结表格）
-  router.post("/vocab-state", requireAuth, (req, res) => {
+  router.post("/vocab-state", requireAuth(database), (req, res) => {
     const wordIds = req.body?.wordIds;
     if (!Array.isArray(wordIds) || !wordIds.every((n: unknown) => Number.isInteger(n))) {
       res.status(400).json({ error: "wordIds 需为整数数组" });
@@ -386,7 +386,7 @@ export function practiceRouter(db?: DatabaseSync): Router {
 
   // 报告句子有误（§3.6）：写入待处理队列（sentence_reports，status=pending）
   // T020：支持可选错误描述 description（trim 后入库，缺省/空串为 NULL）
-  router.post("/report", requireAuth, (req, res) => {
+  router.post("/report", requireAuth(database), (req, res) => {
     const sentenceId = Number(req.body?.sentenceId);
     if (!Number.isInteger(sentenceId) || sentenceId <= 0) {
       res.status(400).json({ error: "sentenceId 需为正整数" });

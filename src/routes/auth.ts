@@ -1,29 +1,76 @@
 // 认证路由（T007）
 import { Router, Request, Response, NextFunction } from "express";
 import type { DatabaseSync } from "node:sqlite";
-import { createUser, findUserById, findUserByUsername, login, toPublicUser, updatePreferences } from "../auth.js";
+import { createUser, findUserById, findUserByUsername, login, toPublicUser, updatePreferences, validatePassword, consumeInviteCode, changePassword, verifyPassword } from "../auth.js";
 import { getDb } from "../db.js";
 
-export function requireAuth(req: Request, res: Response, next: NextFunction): void {
-  if (!req.session.userId) {
-    res.status(401).json({ error: "未登录" });
+// T074：登录/注册限速（内存计数：IP 5 次/分钟）
+const loginAttempts = new Map<string, number[]>();
+export function rateLimit(req: Request, res: Response, next: NextFunction): void {
+  // T074：测试环境不限速（vitest NODE_ENV=test——密集注册用例不误伤）
+  if (process.env.NODE_ENV === "test") {
+    next();
     return;
   }
+  const ip = req.ip ?? req.socket.remoteAddress ?? "unknown";
+  const now = Date.now();
+  const arr = (loginAttempts.get(ip) ?? []).filter((t) => now - t < 60000);
+  if (arr.length >= 5) {
+    res.status(429).json({ error: "尝试过于频繁，请稍后再试" });
+    return;
+  }
+  arr.push(now);
+  loginAttempts.set(ip, arr);
   next();
+}
+
+// T074：认证中间件（工厂：带 db 实时校验用户存在与状态——停用立即踢下线）
+export function requireAuth(db?: DatabaseSync) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (!req.session.userId) {
+      res.status(401).json({ error: "未登录" });
+      return;
+    }
+    if (db) {
+      const user = findUserById(db, req.session.userId);
+      if (!user) {
+        res.status(401).json({ error: "用户不存在" });
+        return;
+      }
+      if (user.status !== "active") {
+        res.status(403).json({ error: "账号已停用" });
+        return;
+      }
+    }
+    next();
+  };
 }
 
 export function authRouter(db?: DatabaseSync): Router {
   const router = Router();
   const database = db ?? getDb();
 
-  router.post("/register", (req, res) => {
-    const { username, password, nickname } = req.body ?? {};
+  router.post("/register", rateLimit, (req, res) => {
+    const { username, password, nickname, inviteCode } = req.body ?? {};
     if (typeof username !== "string" || username.trim().length === 0) {
       res.status(400).json({ error: "用户名不能为空" });
       return;
     }
-    if (typeof password !== "string" || password.length < 6) {
-      res.status(400).json({ error: "密码至少 6 位" });
+    // T074：密码策略（≥8 位 + 3 类字符）
+    const pwErr = validatePassword(String(password ?? ""));
+    if (pwErr) {
+      res.status(400).json({ error: pwErr });
+      return;
+    }
+    // T074：邀请码必填（防滥用 + 版权合规）
+    const code = String(inviteCode ?? "").trim();
+    if (!code) {
+      res.status(400).json({ error: "请填写邀请码" });
+      return;
+    }
+    const codeRow = database.prepare("SELECT id FROM invite_codes WHERE code=? AND enabled=1 AND used_by IS NULL").get(code);
+    if (!codeRow) {
+      res.status(400).json({ error: "邀请码无效或已被使用" });
       return;
     }
     const db = database;
@@ -31,17 +78,35 @@ export function authRouter(db?: DatabaseSync): Router {
       res.status(409).json({ error: "用户名已存在" });
       return;
     }
-    const id = createUser(db, { username: username.trim(), password, nickname });
-    const user = findUserById(db, id)!;
-    req.session.userId = user.id;
-    res.status(201).json(toPublicUser(user));
+    // 原子消费邀请码 + 建用户（防并发重复使用）
+    db.exec("BEGIN");
+    try {
+      const id = createUser(db, { username: username.trim(), password, nickname });
+      const ok = consumeInviteCode(db, code, id);
+      db.exec("COMMIT");
+      if (!ok) {
+        res.status(400).json({ error: "邀请码已被使用" });
+        return;
+      }
+      const user = findUserById(db, id)!;
+      req.session.userId = user.id;
+      res.status(201).json(toPublicUser(user));
+    } catch (e) {
+      db.exec("ROLLBACK");
+      throw e;
+    }
   });
 
-  router.post("/login", (req, res) => {
+  router.post("/login", rateLimit, (req, res) => {
     const { username, password } = req.body ?? {};
     const user = login(database, String(username ?? ""), String(password ?? ""));
     if (!user) {
       res.status(401).json({ error: "用户名或密码错误" });
+      return;
+    }
+    // T074：停用用户拒绝登录（已登录的由 requireAuth 校验 status 立即踢下线）
+    if (user.status !== "active") {
+      res.status(403).json({ error: "账号已停用" });
       return;
     }
     req.session.userId = user.id;
@@ -55,7 +120,7 @@ export function authRouter(db?: DatabaseSync): Router {
     });
   });
 
-  router.get("/me", requireAuth, (req, res) => {
+  router.get("/me", requireAuth(database), (req, res) => {
     const user = findUserById(database, req.session.userId!);
     if (!user) {
       res.status(401).json({ error: "用户不存在" });
@@ -65,7 +130,7 @@ export function authRouter(db?: DatabaseSync): Router {
   });
 
   // 更新偏好（T029：整体替换 users.preferences JSON）
-  router.post("/preferences", requireAuth, (req, res) => {
+  router.post("/preferences", requireAuth(database), (req, res) => {
     const prefs = req.body ?? {};
     if (typeof prefs !== "object" || prefs === null) {
       res.status(400).json({ error: "preferences 需为对象" });
@@ -77,7 +142,28 @@ export function authRouter(db?: DatabaseSync): Router {
   });
 
 // T053c：足迹（过去 7 天操作记录）+ 基本信息 + 勋章等级
-  router.get("/footprint", requireAuth, (req, res) => {
+  // T074：修改密码（旧密码校验 + 新密码策略；成功后清强制改密标记）
+  router.post("/change-password", requireAuth(database), (req, res) => {
+    const { oldPassword, newPassword } = req.body ?? {};
+    const user = findUserById(database, req.session.userId!);
+    if (!user) {
+      res.status(401).json({ error: "用户不存在" });
+      return;
+    }
+    if (!verifyPassword(String(oldPassword ?? ""), user.password_hash)) {
+      res.status(400).json({ error: "原密码错误" });
+      return;
+    }
+    const pwErr = validatePassword(String(newPassword ?? ""));
+    if (pwErr) {
+      res.status(400).json({ error: pwErr });
+      return;
+    }
+    changePassword(database, user.id, newPassword);
+    res.json({ ok: true });
+  });
+
+  router.get("/footprint", requireAuth(database), (req, res) => {
     const userId = req.session.userId!;
     const since = new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10); // 含今天共 7 天
     const sessions = database

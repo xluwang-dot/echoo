@@ -11,13 +11,13 @@ export function vocabRouter(db?: DatabaseSync): Router {
   const database = db ?? getDb();
 
   // GET / — 生词本列表（词+句子+中文，按时间倒序）
-  router.get("/", requireAuth, (req, res) => {
+  router.get("/", requireAuth(database), (req, res) => {
     const vocab = getUserVocab(database, req.session.userId!);
     res.json({ vocab, count: vocab.length });
   });
 
   // GET /stats — 统计（生词数、已掌握数、涉及句子数）
-  router.get("/stats", requireAuth, (req, res) => {
+  router.get("/stats", requireAuth(database), (req, res) => {
     const vocab = getUserVocab(database, req.session.userId!);
     const sentenceIds = new Set(vocab.map((v) => v.sentence_id));
     const masteredCount = getMasteredCount(database, req.session.userId!);
@@ -29,13 +29,13 @@ export function vocabRouter(db?: DatabaseSync): Router {
   });
 
   // GET /mastered — 已掌握词句对（T046 掌握词墙）
-  router.get("/mastered", requireAuth, (req, res) => {
+  router.get("/mastered", requireAuth(database), (req, res) => {
     const vocab = getMasteredVocab(database, req.session.userId!);
     res.json({ vocab, count: vocab.length });
   });
 
   // T070：单词候选（输入防抖搜索）
-  router.get("/search", requireAuth, (req, res) => {
+  router.get("/search", requireAuth(database), (req, res) => {
     const q = String(req.query.q ?? "").trim().toLowerCase();
     if (!q) {
       res.json({ matches: [] });
@@ -45,7 +45,7 @@ export function vocabRouter(db?: DatabaseSync): Router {
   });
 
   // T070：词详情 + 状态 + 关联句子
-  router.get("/lookup", requireAuth, (req, res) => {
+  router.get("/lookup", requireAuth(database), (req, res) => {
     const word = String(req.query.word ?? "").trim().toLowerCase();
     if (!word) {
       res.status(400).json({ error: "word 参数必填" });
@@ -60,7 +60,7 @@ export function vocabRouter(db?: DatabaseSync): Router {
   });
 
   // T070：指定句子入本（幂等；不动该词其他句的已有记录——保留原有位置）
-  router.post("/add", requireAuth, (req, res) => {
+  router.post("/add", requireAuth(database), (req, res) => {
     const wordId = Number(req.body?.wordId);
     const sentenceId = Number(req.body?.sentenceId);
     if (!Number.isInteger(wordId) || !Number.isInteger(sentenceId)) {
@@ -72,7 +72,7 @@ export function vocabRouter(db?: DatabaseSync): Router {
   });
 
   // DELETE /:wordId/:sentenceId — 删除单条词句对
-  router.delete("/:wordId/:sentenceId", requireAuth, (req, res) => {
+  router.delete("/:wordId/:sentenceId", requireAuth(database), (req, res) => {
     const wordId = Number(req.params.wordId);
     const sentenceId = Number(req.params.sentenceId);
     if (!Number.isFinite(wordId) || !Number.isFinite(sentenceId)) {

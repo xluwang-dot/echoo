@@ -42,6 +42,10 @@ const MIGRATIONS: [string, string, string][] = [
   ["words", "lesson_no", "INTEGER"],
   ["words", "lesson_pos", "INTEGER"],
   ["sentences", "is_word_only", "INTEGER DEFAULT 0"],
+  // T074：用户角色/状态/强制改密
+  ["users", "role", "TEXT DEFAULT 'user'"],
+  ["users", "status", "TEXT DEFAULT 'active'"],
+  ["users", "must_change_password", "INTEGER DEFAULT 0"],
 ];
 
 function migrate(db: DatabaseSync): void {

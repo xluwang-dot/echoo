@@ -2,6 +2,7 @@
 import fs from "fs";
 import path from "path";
 import express from "express";
+import helmet from "helmet";
 import { DB_PATH, initDb } from "./db.js";
 import { seedIfEmpty } from "./db/seed.js";
 import { configureSession } from "./sessionStore.js";
@@ -17,6 +18,7 @@ const db = initDb(DB_PATH);
 seedIfEmpty(db);
 
 const app = express();
+app.use(helmet()); // T074：安全响应头（X-Frame-Options/nosniff 等）
 app.use(express.json());
 app.use(configureSession());
 
@@ -39,6 +41,13 @@ if (fs.existsSync(WEB_DIST)) {
     res.sendFile(path.join(WEB_DIST, "index.html"));
   });
 }
+
+// T074：生产环境错误处理（不泄露堆栈）
+app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error(err);
+  if (res.headersSent) return;
+  res.status(500).json({ error: process.env.NODE_ENV === "production" ? "服务器内部错误" : String(err?.message ?? err) });
+});
 
 app.listen(PORT, () => {
   console.log(`echoo 服务已启动: http://localhost:${PORT}`);
