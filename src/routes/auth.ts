@@ -4,7 +4,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { createUser, findUserById, findUserByUsername, login, toPublicUser, updatePreferences, validatePassword, consumeInviteCode, changePassword, verifyPassword } from "../auth.js";
 import { getDb } from "../db.js";
 
-// T074：登录/注册限速（内存计数：IP 5 次/分钟）
+// T074：登录/注册限速（失败才计数：IP 5 次失败/分钟——成功不计数，避免误伤正常用户）
 const loginAttempts = new Map<string, number[]>();
 export function rateLimit(req: Request, res: Response, next: NextFunction): void {
   // T074：测试环境不限速（vitest NODE_ENV=test——密集注册用例不误伤）
@@ -19,9 +19,17 @@ export function rateLimit(req: Request, res: Response, next: NextFunction): void
     res.status(429).json({ error: "尝试过于频繁，请稍后再试" });
     return;
   }
+  (req as Request & { _authFailed?: boolean })._authFailed = false;
+  next();
+}
+// 记录失败（login/register 失败时调用）
+export function recordFailure(req: Request): void {
+  if (process.env.NODE_ENV === "test") return;
+  const ip = req.ip ?? req.socket.remoteAddress ?? "unknown";
+  const now = Date.now();
+  const arr = (loginAttempts.get(ip) ?? []).filter((t) => now - t < 60000);
   arr.push(now);
   loginAttempts.set(ip, arr);
-  next();
 }
 
 // T074：认证中间件（工厂：带 db 实时校验用户存在与状态——停用立即踢下线）
@@ -101,6 +109,7 @@ export function authRouter(db?: DatabaseSync): Router {
     const { username, password } = req.body ?? {};
     const user = login(database, String(username ?? ""), String(password ?? ""));
     if (!user) {
+      recordFailure(req); // T074：仅失败计数（防爆破不误伤）
       res.status(401).json({ error: "用户名或密码错误" });
       return;
     }
