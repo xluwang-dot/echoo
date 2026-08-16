@@ -8,6 +8,7 @@ const mode = ref<"login" | "register">("login");
 const username = ref("");
 const password = ref("");
 const nickname = ref("");
+const inviteCode = ref(""); // T075：邀请码必填
 const error = ref("");
 const busy = ref(false);
 
@@ -21,10 +22,14 @@ async function submit() {
     error.value = "请填写昵称";
     return;
   }
+  if (mode.value === "register" && !inviteCode.value) {
+    error.value = "请填写邀请码";
+    return;
+  }
   busy.value = true;
   try {
     if (mode.value === "register") {
-      await api.register(username.value, password.value, nickname.value);
+      await api.register(username.value, password.value, nickname.value, inviteCode.value);
       await api.login(username.value, password.value);
     } else {
       await api.login(username.value, password.value);
@@ -51,6 +56,10 @@ async function submit() {
       </div>
       <div v-if="mode === 'register'" class="field">
         <input v-model="nickname" placeholder="昵称" @keyup.enter="submit" />
+      </div>
+      <!-- T075：邀请码（注册必填，管理页生成） -->
+      <div v-if="mode === 'register'" class="field">
+        <input v-model="inviteCode" placeholder="邀请码" @keyup.enter="submit" />
       </div>
       <div class="field">
         <input v-model="password" type="password" placeholder="密码" @keyup.enter="submit" />
