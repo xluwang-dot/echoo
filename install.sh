@@ -28,6 +28,8 @@ echo "==> 安装后端依赖..."
 npm install || { echo "❌ 后端依赖安装失败"; exit 1; }
 echo "==> 安装前端依赖..."
 (cd web && npm install) || { echo "❌ 前端依赖安装失败"; exit 1; }
+echo "==> 编译后端（迁移/管理员设置需要 dist/）..."
+npm run build >/dev/null 2>&1 || { echo "❌ 后端编译失败"; exit 1; }
 
 # ---------- 3. 音频文件检查 ----------
 echo "==> 检查语音文件..."
@@ -47,11 +49,7 @@ node -e "
 const { initDb } = require('./dist/db.js');
 initDb('data/word_typer.db');
 console.log('  数据库迁移完成');
-" 2>/dev/null || { npm run build >/dev/null 2>&1; node -e "
-const { initDb } = require('./dist/db.js');
-initDb('data/word_typer.db');
-console.log('  数据库迁移完成');
-"; }
+"
 
 # 交互式设置管理员（用户名 + 密码；密码策略 ≥8 位 + 3 类字符）
 ADMIN_USER="${ADMIN_USER:-xluwang}"
