@@ -25,9 +25,10 @@ command -v git >/dev/null || { echo "❌ 未安装 git"; exit 1; }
 
 # ---------- 2. 安装依赖 ----------
 echo "==> 安装后端依赖..."
-npm install || { echo "❌ 后端依赖安装失败"; exit 1; }
+# 生产机需要 devDependencies（tsc 编译）——NODE_ENV=production 时 npm 默认跳过 dev
+NODE_ENV=development npm install || { echo "❌ 后端依赖安装失败"; exit 1; }
 echo "==> 安装前端依赖..."
-(cd web && npm install) || { echo "❌ 前端依赖安装失败"; exit 1; }
+(cd web && NODE_ENV=development npm install) || { echo "❌ 前端依赖安装失败"; exit 1; }
 echo "==> 编译后端（迁移/管理员设置需要 dist/）..."
 npm run build >/dev/null 2>&1 || { echo "❌ 后端编译失败"; exit 1; }
 
