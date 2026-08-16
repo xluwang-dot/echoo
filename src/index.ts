@@ -10,6 +10,7 @@ import { authRouter } from "./routes/auth.js";
 import { practiceRouter } from "./routes/practice.js";
 import { audioRouter } from "./routes/audio.js";
 import { vocabRouter } from "./routes/vocab.js";
+import { adminRouter } from "./routes/admin.js";
 
 const PORT = Number(process.env.PORT ?? 3008);
 
@@ -30,6 +31,7 @@ app.use("/api/auth", authRouter());
 app.use("/api/practice", practiceRouter());
 app.use("/api/audio", audioRouter());
 app.use("/api/vocab", vocabRouter());
+app.use("/api/admin", adminRouter()); // T075 管理
 
 // T019：生产静态托管（web/dist 存在时，单端口 3008 同时服务前端 + API）
 const WEB_DIST = path.join(import.meta.dirname, "..", "web", "dist");
