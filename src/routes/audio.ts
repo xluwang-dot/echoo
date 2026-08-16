@@ -15,7 +15,9 @@ function safeAudioPath(abs: string): boolean {
 
 // T066：sendFile 统一回调（异步失败不挂起）
 function sendAudio(res: Response, abs: string): void {
-  res.sendFile(abs, (err) => {
+  // T073：按扩展名设类型（词音频 mp3 / 句音频 mp3 或 wav）
+  const type = abs.toLowerCase().endsWith(".mp3") ? "audio/mpeg" : "audio/wav";
+  res.type(type).sendFile(abs, (err) => {
     if (err && !res.headersSent) {
       res.status(500).json({ error: "音频发送失败" });
     }
@@ -47,7 +49,6 @@ export function audioRouter(db?: DatabaseSync): Router {
       res.status(404).json({ error: "音频文件缺失" });
       return;
     }
-    res.type("audio/wav");
     sendAudio(res, abs);
   });
 
@@ -70,7 +71,6 @@ export function audioRouter(db?: DatabaseSync): Router {
       res.status(404).json({ error: "音频文件缺失" });
       return;
     }
-    res.type("audio/wav");
     sendAudio(res, abs);
   });
 
