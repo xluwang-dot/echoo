@@ -108,6 +108,7 @@ async function loadSummaryWords() {
 const slideState = ref<"idle" | "exit" | "enter">("idle");
 const streak = ref(0); // 连击：连续无提示完成的句子数
 const myName = ref("同学"); // T070：欢迎语昵称
+const myRole = ref("user"); // T075：管理入口（admin 可见）
 // T070：顶栏单词查询
 const searchQ = ref("");
 function goLookup() {
@@ -748,6 +749,7 @@ onMounted(async () => {
   try {
     const me = await api.me();
     myName.value = me.nickname || me.username || "同学"; // T070：欢迎语
+    myRole.value = me.role ?? "user"; // T075
     forceReview.value = me.preferences?.login_force_review === true;
     const d = await api.dueCount();
     dueBanner.value = d.due;
@@ -773,6 +775,7 @@ onUnmounted(() => {
         <span class="title">背单词 · 听写</span>
         <div class="topbar-right">
           <span v-if="streak >= 3" class="streak-badge">🔥 连击 ×{{ streak }}</span>
+          <button v-if="myRole === 'admin'" class="ghost" @click="router.push('/admin')">🛠 管理</button>
           <button class="ghost" @click="router.push('/settings')">⚙️ 设置</button>
           <button class="ghost" @click="onLogout">退出</button>
         </div>

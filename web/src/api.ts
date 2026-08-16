@@ -97,7 +97,7 @@ export const api = {
   login: (username: string, password: string) =>
     req<{ id: number }>("POST", "/api/auth/login", { username, password }),
   logout: () => req<{ ok: boolean }>("POST", "/api/auth/logout", {}),
-  me: () => req<{ id: number; username: string; nickname: string; preferences: Record<string, unknown> }>("GET", "/api/auth/me"),
+  me: () => req<{ id: number; username: string; nickname: string; preferences: Record<string, unknown>; role: string; status: string; must_change_password: boolean }>("GET", "/api/auth/me"),
   footprint: () =>
     req<{
       user: { username: string; nickname: string | null; level: number };
@@ -105,7 +105,7 @@ export const api = {
       stats: { vocabCount: number; masteredCount: number };
     }>("GET", "/api/auth/footprint"),
   updatePreferences: (preferences: Record<string, unknown>) =>
-    req<{ id: number; username: string; nickname: string; preferences: Record<string, unknown> }>("POST", "/api/auth/preferences", preferences),
+    req<{ id: number; username: string; nickname: string; preferences: Record<string, unknown>; role: string; status: string; must_change_password: boolean }>("POST", "/api/auth/preferences", preferences),
 
   dueCount: () => req<{ due: number }>("GET", "/api/practice/due-count"),
   levelupStatus: () => req<{ level: number; ready: boolean; rule: string }>("GET", "/api/practice/levelup-status"), // T053b
@@ -155,4 +155,30 @@ export const api = {
     }>("GET", `/api/vocab/lookup?word=${encodeURIComponent(word)}`),
   vocabAdd: (wordId: number, sentenceId: number) =>
     req<{ ok: boolean }>("POST", "/api/vocab/add", { wordId, sentenceId }),
+
+  // T075 管理
+  adminUsers: () => req<{ users: { id: number; username: string; nickname: string | null; role: string; status: string; level: number }[] }>("GET", "/api/admin/users"),
+  adminUserAction: (id: number, action: "disable" | "enable" | "delete") =>
+    req<{ ok: boolean }>("POST", `/api/admin/users/${id}/${action}`, {}),
+  adminReports: () =>
+    req<{ reports: { id: number; sentence_id: number; time: string; status: string; description: string | null; en: string; zh: string; username: string | null }[] }>("GET", "/api/admin/reports"),
+  adminHandleReport: (id: number) => req<{ ok: boolean }>("POST", `/api/admin/reports/${id}/handle`, {}),
+  // T075：句子更新（FormData 上传——fetch 自动 boundary，不手动设 Content-Type）
+  adminUpdateSentence: async (id: number, data: { en?: string; zh?: string; file?: File }): Promise<{ ok: boolean }> => {
+    const fd = new FormData();
+    if (data.en) fd.append("en", data.en);
+    if (data.zh !== undefined) fd.append("zh", data.zh);
+    if (data.file) fd.append("file", data.file);
+    const res = await fetch(`/api/admin/sentences/${id}/update`, { method: "POST", body: fd });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e.error ?? "更新失败");
+    }
+    return res.json();
+  },
+  adminDeleteSentence: (id: number) => req<{ ok: boolean }>("POST", `/api/admin/sentences/${id}/delete`, {}),
+  adminInvites: () =>
+    req<{ invites: { id: number; code: string; enabled: number; used_by: number | null; used_at: string | null; used_by_name: string | null; created_at: string | null }[] }>("GET", "/api/admin/invites"),
+  adminCreateInvite: () => req<{ ok: boolean; id: number; code: string }>("POST", "/api/admin/invites", {}),
+  adminToggleInvite: (id: number) => req<{ ok: boolean }>("POST", `/api/admin/invites/${id}/toggle`, {}),
 };
