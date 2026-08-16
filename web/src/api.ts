@@ -92,8 +92,8 @@ async function reqDelete<T>(url: string): Promise<T> {
 }
 
 export const api = {
-  register: (username: string, password: string, nickname: string) =>
-    req<{ id: number }>("POST", "/api/auth/register", { username, password, nickname }),
+  register: (username: string, password: string, nickname?: string, inviteCode?: string) =>
+    req<{ id: number }>("POST", "/api/auth/register", { username, password, nickname, inviteCode }),
   login: (username: string, password: string) =>
     req<{ id: number }>("POST", "/api/auth/login", { username, password }),
   logout: () => req<{ ok: boolean }>("POST", "/api/auth/logout", {}),
