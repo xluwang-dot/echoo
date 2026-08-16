@@ -19,6 +19,7 @@ const db = initDb(DB_PATH);
 seedIfEmpty(db);
 
 const app = express();
+app.set("trust proxy", 1); // 反代部署：req.secure 依据 X-Forwarded-Proto（Nginx HTTPS → secure cookie 正常）
 app.use(helmet()); // T074：安全响应头（X-Frame-Options/nosniff 等）
 app.use(express.json());
 app.use(configureSession());
