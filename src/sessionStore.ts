@@ -20,6 +20,12 @@ export function configureSession() {
     secret: SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
-    cookie: { httpOnly: true, sameSite: "lax", maxAge: 1000 * 60 * 60 * 24 * 7 },
+    // T074：HTTPS 部署（SESSION_SECURE=1）时 cookie 加 secure——公网必须
+    cookie: {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.SESSION_SECURE === "1",
+      maxAge: 1000 * 60 * 60 * 24 * 7,
+    },
   });
 }
