@@ -45,10 +45,15 @@ if (fs.existsSync(WEB_DIST)) {
   });
 }
 
-// T074：生产环境错误处理（不泄露堆栈）
+// T074：错误处理（不泄露堆栈；JSON 解析错误返回 400）
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);
   if (res.headersSent) return;
+  // 请求体 JSON 解析失败 → 客户端错误 400（非服务器问题）
+  if (err instanceof SyntaxError && "body" in err) {
+    res.status(400).json({ error: "请求体格式错误" });
+    return;
+  }
   res.status(500).json({ error: process.env.NODE_ENV === "production" ? "服务器内部错误" : String(err?.message ?? err) });
 });
 
